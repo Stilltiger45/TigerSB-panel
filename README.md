@@ -6,14 +6,12 @@
 
 Сейчас готов первый этап: каркас панели, вход по логину и паролю, установщик с выбором роли и режим сна. Протоколы появятся на следующих этапах.
 
-## Установка
+## Быстрый старт
 
-На чистом сервере (Debian или Ubuntu с systemd, amd64 или arm64), от root:
+На чистом VPS (Debian 11+ или Ubuntu 20.04+ с systemd, amd64 или arm64), от root:
 
 ```bash
-git clone https://github.com/Stilltiger45/TigerSB-panel.git
-cd TigerSB-panel
-sudo ./scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/install.sh | sudo bash
 ```
 
 Установщик спросит:
@@ -22,7 +20,33 @@ sudo ./scripts/install.sh
 2. Для основного сервера: домен и email для сертификата. Для точки маршрутизации: адрес основного сервера.
 3. Логин и пароль администратора (пароль не короче 10 символов).
 
-Если Go на сервере нет, установщик сам скачает его для сборки. Когда появятся релизы, можно будет передать готовый бинарник: `sudo ./scripts/install.sh --binary ./tigersb-linux-amd64`.
+В конце он покажет команду SSH-туннеля и секретный адрес панели, их нужно сохранить. Повторный запуск той же команды ничего не ломает: он покажет состояние и адрес установленной панели.
+
+Пока релизов нет, установщик скачивает исходники и собирает панель сам, при необходимости скачав Go. Это занимает пару минут.
+
+### Обновление
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/install.sh | sudo bash -s -- --update
+```
+
+Настройки, пароль и база сохраняются. Усыплённая панель после обновления остаётся усыплённой.
+
+### Полное удаление с сервера
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/uninstall.sh | sudo bash
+```
+
+Удаляет все службы `tigersb*`, бинарник, настройки и базу. Перед удалением спросит подтверждение и предложит сохранить копию настроек и базы в `/root/tigersb-backup-<дата>.tar.gz`. Чтобы перенести панель на другой сервер, распакуйте архив там командой `tar -xzf <архив> -C /` и запустите установщик: он поднимет панель с теми же пользователями, паролем и секретным адресом.
+
+### Из клона репозитория
+
+```bash
+git clone https://github.com/Stilltiger45/TigerSB-panel.git
+cd TigerSB-panel
+sudo ./scripts/install.sh            # или --binary ./tigersb-linux-amd64 с готовым бинарником
+```
 
 ## Вход в панель
 
