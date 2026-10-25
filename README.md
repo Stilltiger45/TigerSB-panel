@@ -104,3 +104,9 @@ CGO_ENABLED=0 go build -o tigersb ./cmd/tigersb
 ```
 
 Тег `v*` собирает релиз с бинарниками `tigersb-linux-amd64` и `tigersb-linux-arm64`.
+
+## Лицензия
+
+GPL-3.0, см. [LICENSE](LICENSE). Лицензия совпадает с лицензией [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client), поэтому панель может подключать его пакет `pkg/profile`. Все зависимости панели распространяются под MIT или BSD и с GPL-3.0 совместимы. Это проверяет `scripts/check-licenses.sh` в CI: он падает, если у зависимости нет лицензии или она несовместима (AGPL, SSPL, BSL и подобные).
+
+Подробности устройства: [docs/architecture.md](docs/architecture.md). О найденных уязвимостях: [SECURITY.md](SECURITY.md).
