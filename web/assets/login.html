@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>TigerSB — вход</title>
+<link rel="stylesheet" href="static/app.css">
+</head>
+<body class="center">
+<main class="card">
+  <h1>TigerSB</h1>
+  <p class="muted">Вход в панель</p>
+  <form id="login" autocomplete="on">
+    <label>Логин<input name="username" autocomplete="username" required></label>
+    <label>Пароль<input name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Войти</button>
+    <p id="error" class="error" role="alert" hidden></p>
+  </form>
+</main>
+<script src="static/login.js"></script>
+</body>
+</html>
