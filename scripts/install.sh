@@ -116,6 +116,15 @@ choose_admin() {
 	[ "${#password}" -ge 10 ] || die "пароль короче 10 символов"
 }
 
+# repo_dir prints the checkout this script runs from, or nothing when piped from curl.
+repo_dir() {
+	local dir
+	dir="$(dirname "${BASH_SOURCE[0]:-$0}")/.."
+	if [ -d "$dir" ]; then
+		(cd "$dir" && pwd)
+	fi
+}
+
 install_go() {
 	local dir="$1"
 	echo "Скачиваю Go $GO_VERSION для сборки..." >&2
@@ -132,7 +141,7 @@ get_binary() {
 		return
 	fi
 	local src
-	src="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || true)"
+	src="$(repo_dir)"
 	if [ -n "$src" ] && [ -f "$src/go.mod" ] && [ -f "$src/cmd/tigersb/main.go" ]; then
 		local go
 		go="$(command -v go || true)"
@@ -151,7 +160,7 @@ get_binary() {
 
 install_unit() {
 	local src
-	src="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || true)"
+	src="$(repo_dir)"
 	if [ -n "$src" ] && [ -f "$src/deploy/tigersb.service" ]; then
 		install -m 0644 "$src/deploy/tigersb.service" "$UNIT"
 	else
