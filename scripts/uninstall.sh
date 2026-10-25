@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# TigerSB uninstaller: removes the panel, its services, config and database.
+#
+#   curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/uninstall.sh | sudo bash
+#   sudo ./scripts/uninstall.sh --yes             # without questions, no backup
+set -euo pipefail
+
+BIN=/usr/local/bin/tigersb
+CONF_DIR=/etc/tigersb
+DATA_DIR=/var/lib/tigersb
+UNIT_DIR=/etc/systemd/system
+
+yes=0
+case "${1:-}" in
+	--yes|-y) yes=1 ;;
+	"") ;;
+	*) echo "Использование: uninstall.sh [--yes]" >&2; exit 2 ;;
+esac
+
+die() { echo "Ошибка: $*" >&2; exit 1; }
+
+# Prompts read from the terminal so that `curl ... | sudo bash` works too.
+ask() {
+	local var
+	read -r -p "$1" var </dev/tty
+	printf '%s' "$var"
+}
+
+[ "$(id -u)" -eq 0 ] || die "запустите от root (sudo)"
+
+# Every service the panel creates is named tigersb*.service, so later stages
+# (Xray, sing-box, Caddy configs) are removed by the same pattern.
+shopt -s nullglob
+units=()
+for f in "$UNIT_DIR"/tigersb.service "$UNIT_DIR"/tigersb-*.service "$UNIT_DIR"/tigersb@.service; do
+	[ -e "$f" ] || continue
+	units+=("$(basename "$f")")
+done
+shopt -u nullglob
+
+if [ ! -e "$BIN" ] && [ ! -d "$CONF_DIR" ] && [ ! -d "$DATA_DIR" ] && [ ${#units[@]} -eq 0 ]; then
+	echo "TigerSB не установлен, удалять нечего."
+	exit 0
+fi
+
+echo "Будет удалено:"
+for u in "${units[@]}"; do
+	echo "  - служба $u"
+done
+[ ! -e "$BIN" ] || echo "  - $BIN"
+[ ! -d "$CONF_DIR" ] || echo "  - $CONF_DIR (настройки и секретный путь)"
+[ ! -d "$DATA_DIR" ] || echo "  - $DATA_DIR (база: администраторы, пользователи, подписки)"
+echo
+
+backup=0
+if [ "$yes" -eq 0 ]; then
+	case "$(ask 'Удалить TigerSB полностью? Это необратимо [y/N]: ')" in
+		y|Y|д|Д) ;;
+		*) echo "Отменено."; exit 0 ;;
+	esac
+	if [ -d "$DATA_DIR" ] || [ -d "$CONF_DIR" ]; then
+		case "$(ask 'Сохранить копию настроек и базы для переноса на другой сервер? [y/N]: ')" in
+			y|Y|д|Д) backup=1 ;;
+		esac
+	fi
+fi
+
+if [ "$backup" -eq 1 ]; then
+	archive="/root/tigersb-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+	dirs=()
+	for d in "$CONF_DIR" "$DATA_DIR"; do
+		[ ! -d "$d" ] || dirs+=("${d#/}")
+	done
+	# Stop first so the SQLite database is not copied mid-write.
+	systemctl stop tigersb.service 2>/dev/null || true
+	(umask 077 && tar -czf "$archive" -C / "${dirs[@]}")
+	echo "Копия сохранена: $archive"
+	echo "Перенос: скопируйте архив на новый сервер, выполните там tar -xzf <архив> -C / и запустите установщик."
+fi
+
+for u in "${units[@]}"; do
+	echo "Останавливаю $u..."
+	systemctl disable --now "$u" 2>/dev/null || true
+	systemctl reset-failed "$u" 2>/dev/null || true
+	rm -f "${UNIT_DIR:?}/$u"
+done
+systemctl daemon-reload 2>/dev/null || true
+
+echo "Удаляю файлы..."
+rm -rf "$CONF_DIR" "$DATA_DIR" "$BIN"
+
+echo
+echo "TigerSB полностью удалён."
