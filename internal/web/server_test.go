@@ -2,8 +2,11 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/auth"
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
+	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 )
 
@@ -36,7 +40,12 @@ func newTestServer(t *testing.T) *Server {
 		"app.html":       {Data: []byte("APP PAGE")},
 		"static/app.css": {Data: []byte("body{}")},
 	}
-	return New(cfg, st, assets, "test")
+	s := New(cfg, st, assets, "test")
+	dir := t.TempDir()
+	s.Site = site.Paths{Dir: filepath.Join(dir, "caddy"), WWW: filepath.Join(dir, "www"), Socket: filepath.Join(dir, "none.sock")}
+	s.CertAddr = "127.0.0.1:1"
+	s.Run = func(string, ...string) (string, error) { return "inactive", errors.New("exit 3") }
+	return s
 }
 
 func do(s *Server, method, path, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
@@ -173,5 +182,71 @@ func TestSecurityHeadersAndStatic(t *testing.T) {
 	}
 	if w := do(s, http.MethodGet, "/"+secret+"/static/../app.html", ""); w.Code == http.StatusOK && strings.Contains(w.Body.String(), "APP") {
 		t.Fatal("path traversal served app.html")
+	}
+}
+
+func TestSiteSettings(t *testing.T) {
+	s := newTestServer(t)
+	api := "/" + secret + "/api/site"
+	if w := do(s, http.MethodGet, api, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous: %d", w.Code)
+	}
+	c := login(t, s, "admin", "very-secret-pass").Result().Cookies()[0]
+
+	w := do(s, http.MethodGet, api, "", c)
+	var got struct {
+		Settings  site.Settings
+		Templates []site.Template
+		Cert      site.CertStatus
+		Caddy     string
+		Warning   string
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("get: %d %s", w.Code, w.Body.String())
+	}
+	if got.Settings.Domain != "example.com" || got.Settings.Template == "" || len(got.Templates) == 0 {
+		t.Fatalf("seeded settings: %+v", got)
+	}
+	if got.Cert.State != site.CertMissing || got.Caddy != "inactive" {
+		t.Fatalf("status: %+v %q", got.Cert, got.Caddy)
+	}
+
+	if w := do(s, http.MethodPost, api, `{"domain":"1.2.3.4","template":"books","name":"x"}`, c); w.Code != http.StatusBadRequest {
+		t.Fatalf("IP as domain: %d %s", w.Code, w.Body.String())
+	}
+	w = do(s, http.MethodPost, api, `{"domain":"Site.Example.org","email":"a@b.cd","template":"books","name":"Клуб"}`, c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if got.Settings.Domain != "site.example.org" || got.Warning == "" {
+		t.Fatalf("saved: %+v", got)
+	}
+	conf, err := os.ReadFile(s.Site.Caddyfile())
+	if err != nil || !strings.Contains(string(conf), "site.example.org {") {
+		t.Fatalf("Caddyfile: %v\n%s", err, conf)
+	}
+	page, err := os.ReadFile(filepath.Join(s.Site.WWW, "index.html"))
+	if err != nil || !strings.Contains(string(page), "Клуб") {
+		t.Fatalf("page: %v", err)
+	}
+}
+
+func TestStubPreview(t *testing.T) {
+	s := newTestServer(t)
+	path := "/" + secret + "/stub/preview?t=garden&name=%3Cb%3Ehi"
+	if w := do(s, http.MethodGet, path, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("anonymous preview: %d", w.Code)
+	}
+	c := login(t, s, "admin", "very-secret-pass").Result().Cookies()[0]
+	w := do(s, http.MethodGet, path, "", c)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "<b>hi") {
+		t.Fatalf("preview: %d", w.Code)
+	}
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") {
+		t.Fatalf("preview CSP: %q", csp)
+	}
+	if w := do(s, http.MethodGet, "/"+secret+"/stub/preview?t=nope", "", c); w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown template: %d", w.Code)
 	}
 }

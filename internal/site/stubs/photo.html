@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Name}} — технические работы</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#15181d;color:#d9dde3;font:16px/1.6 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding:24px;box-sizing:border-box}
+main{max-width:480px}
+h1{font-weight:300;letter-spacing:.06em;font-size:1.9rem;margin:.6em 0 .3em}
+p{color:#9aa3ae;margin:.5em 0}
+.bar{height:3px;width:100%;background:#262b33;border-radius:2px;overflow:hidden;margin:1.6em 0 .6em}
+.bar i{display:block;height:100%;width:62%;background:linear-gradient(90deg,#6aa6d8,#b58ad8)}
+small{color:#6c7480}
+</style>
+</head>
+<body>
+<main>
+<svg width="72" height="56" viewBox="0 0 72 56" aria-hidden="true">
+<rect x="2" y="12" width="68" height="42" rx="7" fill="none" stroke="#6aa6d8" stroke-width="3"/>
+<path d="M22 12l5-9h18l5 9" fill="none" stroke="#6aa6d8" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="36" cy="33" r="12" fill="none" stroke="#b58ad8" stroke-width="3"/>
+<circle cx="58" cy="21" r="2.5" fill="#d9dde3"/>
+</svg>
+<h1>{{.Name}}</h1>
+<p>Перебираем архив и меняем галерею. Новые снимки появятся совсем скоро.</p>
+<div class="bar"><i></i></div>
+<small>Технические работы · © {{.Year}} {{.Name}}</small>
+</main>
+</body>
+</html>

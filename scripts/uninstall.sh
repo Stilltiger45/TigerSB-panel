@@ -8,6 +8,7 @@ set -euo pipefail
 BIN=/usr/local/bin/tigersb
 CONF_DIR=/etc/tigersb
 DATA_DIR=/var/lib/tigersb
+LIB_DIR=/usr/local/lib/tigersb
 UNIT_DIR=/etc/systemd/system
 
 yes=0
@@ -38,7 +39,7 @@ for f in "$UNIT_DIR"/tigersb.service "$UNIT_DIR"/tigersb-*.service "$UNIT_DIR"/t
 done
 shopt -u nullglob
 
-if [ ! -e "$BIN" ] && [ ! -d "$CONF_DIR" ] && [ ! -d "$DATA_DIR" ] && [ ${#units[@]} -eq 0 ]; then
+if [ ! -e "$BIN" ] && [ ! -d "$LIB_DIR" ] && [ ! -d "$CONF_DIR" ] && [ ! -d "$DATA_DIR" ] && [ ${#units[@]} -eq 0 ]; then
 	echo "TigerSB не установлен, удалять нечего."
 	exit 0
 fi
@@ -48,8 +49,9 @@ for u in "${units[@]}"; do
 	echo "  - служба $u"
 done
 [ ! -e "$BIN" ] || echo "  - $BIN"
+[ ! -d "$LIB_DIR" ] || echo "  - $LIB_DIR (Caddy)"
 [ ! -d "$CONF_DIR" ] || echo "  - $CONF_DIR (настройки и секретный путь)"
-[ ! -d "$DATA_DIR" ] || echo "  - $DATA_DIR (база: администраторы, пользователи, подписки)"
+[ ! -d "$DATA_DIR" ] || echo "  - $DATA_DIR (база, сертификаты, заглушка)"
 echo
 
 backup=0
@@ -72,7 +74,7 @@ if [ "$backup" -eq 1 ]; then
 		[ ! -d "$d" ] || dirs+=("${d#/}")
 	done
 	# Stop first so the SQLite database is not copied mid-write.
-	systemctl stop tigersb.service 2>/dev/null || true
+	systemctl stop tigersb.service tigersb-caddy.service 2>/dev/null || true
 	(umask 077 && tar -czf "$archive" -C / "${dirs[@]}")
 	echo "Копия сохранена: $archive"
 	echo "Перенос: скопируйте архив на новый сервер, выполните там tar -xzf <архив> -C / и запустите установщик."
@@ -87,7 +89,7 @@ done
 systemctl daemon-reload 2>/dev/null || true
 
 echo "Удаляю файлы..."
-rm -rf "$CONF_DIR" "$DATA_DIR" "$BIN"
+rm -rf "$CONF_DIR" "$DATA_DIR" "$BIN" "$LIB_DIR"
 
 echo
 echo "TigerSB полностью удалён."

@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/auth"
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
+	"github.com/Stilltiger45/TigerSB-panel/internal/service"
+	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 )
 
@@ -40,6 +43,13 @@ type Server struct {
 	version string
 	now     func() time.Time
 
+	// Site is where the Caddyfile and maintenance page live.
+	Site site.Paths
+	// CertAddr is where Caddy serves TLS; the certificate is checked there.
+	CertAddr string
+	// Run executes systemctl; tests replace it.
+	Run service.Runner
+
 	dummyOnce sync.Once
 	dummyHash string
 }
@@ -55,6 +65,10 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, version string) *Ser
 		global:  auth.NewLimiter(30, 15*time.Minute, 15*time.Minute),
 		version: version,
 		now:     time.Now,
+
+		Site:     site.DefaultPaths(filepath.Dir(cfg.DBPath)),
+		CertAddr: site.LocalTLS,
+		Run:      service.ExecRunner,
 	}
 }
 
@@ -80,6 +94,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleLogout(w, r)
 	case rest == "/api/me":
 		s.handleMe(w, r)
+	case rest == "/api/site":
+		s.handleSite(w, r)
+	case rest == "/stub/preview":
+		s.handleStubPreview(w, r)
 	case strings.HasPrefix(rest, "/static/"):
 		s.handleStatic(w, r, strings.TrimPrefix(rest, "/"))
 	default:
@@ -288,4 +306,109 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+type siteResponse struct {
+	Settings  site.Settings   `json:"settings"`
+	Templates []site.Template `json:"templates"`
+	Cert      site.CertStatus `json:"cert"`
+	Caddy     string          `json:"caddy"`
+	Warning   string          `json:"warning,omitempty"`
+}
+
+func (s *Server) siteState(r *http.Request, set site.Settings) siteResponse {
+	return siteResponse{
+		Settings:  set,
+		Templates: site.Templates,
+		Cert:      site.CheckCert(r.Context(), set.Domain, s.CertAddr, nil, s.now()),
+		Caddy:     service.UnitState(s.Run, service.CaddyUnit),
+	}
+}
+
+func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		if _, err := s.currentAdmin(r); err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "требуется вход"})
+			return
+		}
+		set, err := site.Load(r.Context(), s.store, s.cfg)
+		if err != nil {
+			log.Printf("load site: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
+			return
+		}
+		writeJSON(w, http.StatusOK, s.siteState(r, set))
+	case http.MethodPost:
+		if !s.checkPost(w, r) {
+			return
+		}
+		if _, err := s.currentAdmin(r); err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "требуется вход"})
+			return
+		}
+		var set site.Settings
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(&set); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "некорректный запрос"})
+			return
+		}
+		set.Normalize()
+		if err := set.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := site.Save(r.Context(), s.store, set); err != nil {
+			log.Printf("save site: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
+			return
+		}
+		warning := ""
+		if err := site.Apply(r.Context(), set, s.Site, s.now()); errors.Is(err, site.ErrCaddyDown) {
+			warning = err.Error()
+		} else if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		resp := s.siteState(r, set)
+		resp.Warning = warning
+		writeJSON(w, http.StatusOK, resp)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handleStubPreview renders a maintenance page with unsaved settings.
+func (s *Server) handleStubPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.currentAdmin(r); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query()
+	set := site.Settings{Template: q.Get("t"), Name: q.Get("name")}
+	set.Normalize()
+	if set.Name == "" {
+		for _, t := range site.Templates {
+			if t.ID == set.Template {
+				set.Name = t.DefaultName
+			}
+		}
+	}
+	if err := set.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	page, err := site.RenderStub(set, s.now())
+	if err != nil {
+		http.Error(w, "внутренняя ошибка", http.StatusInternalServerError)
+		return
+	}
+	// The stub carries its own inline styles; nothing else may load.
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'")
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(page)
 }
