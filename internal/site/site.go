@@ -37,6 +37,8 @@ const (
 	KeyEmail    = "site.email"
 	KeyTemplate = "site.template"
 	KeyName     = "site.name"
+	// KeyPanelOpen is "1" when the panel answers on https://<domain>/<secret>/.
+	KeyPanelOpen = "panel.open"
 )
 
 // AdminSocket is where the tigersb-caddy unit exposes the Caddy admin API.
@@ -146,6 +148,49 @@ func Load(ctx context.Context, st *store.Store, cfg *config.Config) (Settings, e
 	return s, Save(ctx, st, s)
 }
 
+// PanelOpen reports whether the admin wants the panel reachable through the
+// domain. It is on until someone runs `tigersb close` or presses the button.
+func PanelOpen(ctx context.Context, st *store.Store) (bool, error) {
+	vals, err := st.Settings(ctx)
+	if err != nil {
+		return false, err
+	}
+	return vals[KeyPanelOpen] != "0", nil
+}
+
+// SetPanelOpen stores the choice.
+func SetPanelOpen(ctx context.Context, st *store.Store, open bool) error {
+	v := "0"
+	if open {
+		v = "1"
+	}
+	return st.SetSettings(ctx, map[string]string{KeyPanelOpen: v})
+}
+
+// Route sends the secret path through Caddy to the panel on loopback.
+type Route struct {
+	// Secret is the path segment without slashes.
+	Secret string
+	// Upstream is the panel's loopback address, host:port.
+	Upstream string
+}
+
+// PanelRoute returns the route for cfg, or nil when the panel must stay hidden.
+func PanelRoute(cfg *config.Config, open bool) *Route {
+	if !open {
+		return nil
+	}
+	return &Route{Secret: cfg.SecretPath, Upstream: cfg.Listen}
+}
+
+// PanelURL is the public address of the panel, or "" without a domain.
+func PanelURL(s Settings, cfg *config.Config) string {
+	if s.Domain == "" {
+		return ""
+	}
+	return "https://" + s.Domain + "/" + cfg.SecretPath + "/"
+}
+
 // Save stores validated settings.
 func Save(ctx context.Context, st *store.Store, s Settings) error {
 	if err := s.Validate(); err != nil {
@@ -189,7 +234,11 @@ func (p Paths) Caddyfile() string { return filepath.Join(p.Dir, "Caddyfile") }
 // With a domain Caddy gets a Let's Encrypt certificate through the TLS-ALPN
 // challenge on port 443 only, so port 80 stays closed (the approach of
 // web-panel-proxy, MIT). Without a domain the page is served over plain HTTP.
-func RenderCaddyfile(s Settings, p Paths) string {
+//
+// A non-nil route publishes the panel under its secret path, over HTTPS only;
+// every other path, and the secret path while the panel is closed, gets the
+// maintenance page.
+func RenderCaddyfile(s Settings, p Paths, r *Route) string {
 	var b strings.Builder
 	b.WriteString("# Создано панелью TigerSB. Ручные правки будут перезаписаны.\n{\n")
 	fmt.Fprintf(&b, "\tadmin unix/%s\n", p.Socket)
@@ -204,8 +253,19 @@ func RenderCaddyfile(s Settings, p Paths) string {
 	} else {
 		b.WriteString(":80 {\n")
 	}
-	fmt.Fprintf(&b, "\troot * %s\n", p.WWW)
-	b.WriteString("\ttry_files {path} /index.html\n\tfile_server\n\tencode gzip\n")
+	stub := "\t"
+	if r != nil && s.Domain != "" {
+		fmt.Fprintf(&b, "\t@tigersb path /%s /%s/*\n", r.Secret, r.Secret)
+		fmt.Fprintf(&b, "\thandle @tigersb {\n\t\treverse_proxy %s\n\t}\n", r.Upstream)
+		b.WriteString("\thandle {\n")
+		stub = "\t\t"
+	}
+	fmt.Fprintf(&b, "%sroot * %s\n", stub, p.WWW)
+	fmt.Fprintf(&b, "%stry_files {path} /index.html\n%sfile_server\n", stub, stub)
+	if stub != "\t" {
+		b.WriteString("\t}\n")
+	}
+	b.WriteString("\tencode gzip\n")
 	b.WriteString("\theader {\n\t\t-Server\n\t\tReferrer-Policy no-referrer\n\t\tX-Content-Type-Options nosniff\n\t}\n}\n")
 	return b.String()
 }
@@ -213,26 +273,56 @@ func RenderCaddyfile(s Settings, p Paths) string {
 // ErrCaddyDown means the files were written but Caddy is not running to load them.
 var ErrCaddyDown = errors.New("Caddy не запущен: файлы сохранены и подхватятся при его запуске")
 
-// Apply writes the page and the Caddyfile and loads the config into Caddy.
-func Apply(ctx context.Context, s Settings, p Paths, now time.Time) error {
+// Change is a rendered site: the page and the Caddyfile, not yet written.
+type Change struct {
+	paths Paths
+	page  []byte
+	conf  string
+}
+
+// Render builds the page and the Caddyfile for s.
+func Render(s Settings, p Paths, r *Route, now time.Time) (*Change, error) {
 	if err := s.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	page, err := RenderStub(s, now)
 	if err != nil {
+		return nil, err
+	}
+	return &Change{paths: p, page: page, conf: RenderCaddyfile(s, p, r)}, nil
+}
+
+// Check asks Caddy to adapt the config without running it. It returns
+// ErrCaddyDown when Caddy is not running.
+func (c *Change) Check(ctx context.Context) error {
+	return post(ctx, c.paths.Socket, "/adapt", c.conf)
+}
+
+// Write saves the page and the Caddyfile, which Caddy reads when it starts.
+func (c *Change) Write() error {
+	if err := writeFile(filepath.Join(c.paths.WWW, "index.html"), c.page, 0o755); err != nil {
 		return err
 	}
-	if err := writeFile(filepath.Join(p.WWW, "index.html"), page, 0o755); err != nil {
+	return writeFile(c.paths.Caddyfile(), []byte(c.conf), 0o700)
+}
+
+// Load replaces Caddy's running config. Caddy waits for requests it is
+// serving to finish (grace_period), so a request that came through Caddy must
+// call this only after its response is written.
+func (c *Change) Load(ctx context.Context) error {
+	return post(ctx, c.paths.Socket, "/load", c.conf)
+}
+
+// Apply writes the page and the Caddyfile and loads the config into Caddy.
+func Apply(ctx context.Context, s Settings, p Paths, r *Route, now time.Time) error {
+	c, err := Render(s, p, r, now)
+	if err != nil {
 		return err
 	}
-	conf := RenderCaddyfile(s, p)
-	if err := writeFile(p.Caddyfile(), []byte(conf), 0o700); err != nil {
+	if err := c.Write(); err != nil {
 		return err
 	}
-	if _, err := os.Stat(p.Socket); err != nil {
-		return ErrCaddyDown
-	}
-	return load(ctx, p.Socket, conf)
+	return c.Load(ctx)
 }
 
 func writeFile(path string, data []byte, dirMode os.FileMode) error {
@@ -258,13 +348,18 @@ func adminClient(socket string) *http.Client {
 	}
 }
 
-func load(ctx context.Context, socket, conf string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://caddy/load", strings.NewReader(conf))
+func post(ctx context.Context, socket, path, conf string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://caddy"+path, strings.NewReader(conf))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "text/caddyfile")
 	res, err := adminClient(socket).Do(req)
+	var dial *net.OpError
+	if errors.As(err, &dial) && dial.Op == "dial" {
+		// No socket, or a stale one left by a Caddy that was killed.
+		return ErrCaddyDown
+	}
 	if err != nil {
 		return fmt.Errorf("Caddy не отвечает: %w", err)
 	}

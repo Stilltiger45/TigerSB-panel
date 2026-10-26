@@ -58,7 +58,7 @@ func TestNormalize(t *testing.T) {
 
 func TestCaddyfile(t *testing.T) {
 	p := Paths{Dir: "/d/caddy", WWW: "/d/www", Socket: "/run/x.sock"}
-	got := RenderCaddyfile(valid(), p)
+	got := RenderCaddyfile(valid(), p, nil)
 	for _, want := range []string{
 		"admin unix//run/x.sock",
 		"storage file_system /d/caddy",
@@ -76,7 +76,7 @@ func TestCaddyfile(t *testing.T) {
 	}
 	s := valid()
 	s.Domain, s.Email = "", ""
-	got = RenderCaddyfile(s, p)
+	got = RenderCaddyfile(s, p, nil)
 	if !strings.Contains(got, ":80 {") || strings.Contains(got, "tls") {
 		t.Errorf("no-domain Caddyfile must serve plain HTTP:\n%s", got)
 	}
@@ -136,7 +136,7 @@ func TestLoadSeedsFromConfigAndStaysStable(t *testing.T) {
 func TestApplyWithoutCaddy(t *testing.T) {
 	dir := t.TempDir()
 	p := Paths{Dir: filepath.Join(dir, "caddy"), WWW: filepath.Join(dir, "www"), Socket: filepath.Join(dir, "none.sock")}
-	err := Apply(context.Background(), valid(), p, time.Now())
+	err := Apply(context.Background(), valid(), p, nil, time.Now())
 	if !errors.Is(err, ErrCaddyDown) {
 		t.Fatalf("want ErrCaddyDown, got %v", err)
 	}
@@ -170,7 +170,7 @@ func TestApplyLoadsIntoCaddy(t *testing.T) {
 	defer srv.Close()
 
 	p := Paths{Dir: filepath.Join(dir, "caddy"), WWW: filepath.Join(dir, "www"), Socket: sock}
-	if err := Apply(context.Background(), valid(), p, time.Now()); err != nil {
+	if err := Apply(context.Background(), valid(), p, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if gotType != "text/caddyfile" || !strings.Contains(gotBody, "vpn.example.com {") {
@@ -180,7 +180,7 @@ func TestApplyLoadsIntoCaddy(t *testing.T) {
 	s.Name = "broken"
 	// The name is not in the Caddyfile, so use the domain to trigger the fake error.
 	s.Domain = "broken.example.com"
-	if err := Apply(context.Background(), s, p, time.Now()); err == nil || !strings.Contains(err.Error(), "не принял") {
+	if err := Apply(context.Background(), s, p, nil, time.Now()); err == nil || !strings.Contains(err.Error(), "не принял") {
 		t.Fatalf("want rejection, got %v", err)
 	}
 }
@@ -208,5 +208,82 @@ func TestCheckCert(t *testing.T) {
 	}
 	if st := CheckCert(context.Background(), "", addr, roots, now); st.State != CertNoDomain {
 		t.Fatalf("no domain: %+v", st)
+	}
+}
+
+func TestCaddyfilePanelRoute(t *testing.T) {
+	p := Paths{Dir: "/d/caddy", WWW: "/d/www", Socket: "/run/x.sock"}
+	cfg := &config.Config{SecretPath: "0123456789abcdef0123456789abcdef", Listen: "127.0.0.1:34567"}
+	if PanelRoute(cfg, false) != nil {
+		t.Fatal("closed panel must have no route")
+	}
+	r := PanelRoute(cfg, true)
+	got := RenderCaddyfile(valid(), p, r)
+	for _, want := range []string{
+		"@tigersb path /0123456789abcdef0123456789abcdef /0123456789abcdef0123456789abcdef/*",
+		"handle @tigersb {\n\t\treverse_proxy 127.0.0.1:34567\n\t}",
+		"\thandle {\n\t\troot * /d/www",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Caddyfile lacks %q:\n%s", want, got)
+		}
+	}
+	if closed := RenderCaddyfile(valid(), p, nil); strings.Contains(closed, "reverse_proxy") {
+		t.Errorf("closed panel is still proxied:\n%s", closed)
+	}
+	// Without a domain the panel would be served over plain HTTP, so never publish it.
+	s := valid()
+	s.Domain = ""
+	if plain := RenderCaddyfile(s, p, r); strings.Contains(plain, "reverse_proxy") {
+		t.Errorf("panel published without TLS:\n%s", plain)
+	}
+	if u := PanelURL(valid(), cfg); u != "https://vpn.example.com/0123456789abcdef0123456789abcdef/" {
+		t.Errorf("url: %q", u)
+	}
+	if u := PanelURL(s, cfg); u != "" {
+		t.Errorf("url without domain: %q", u)
+	}
+}
+
+func TestPanelOpenDefaultsToOpen(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	for _, step := range []struct {
+		set  *bool
+		want bool
+	}{{nil, true}, {ptr(false), false}, {ptr(true), true}} {
+		if step.set != nil {
+			if err := SetPanelOpen(ctx, st, *step.set); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if open, err := PanelOpen(ctx, st); err != nil || open != step.want {
+			t.Fatalf("after %v: open=%v err=%v", step.set, open, err)
+		}
+	}
+}
+
+func ptr(b bool) *bool { return &b }
+
+func TestApplyWithStaleSocket(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "admin.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Skipf("unix sockets unavailable: %v", err)
+	}
+	// A killed Caddy leaves its socket file behind.
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	l.Close()
+	p := Paths{Dir: filepath.Join(dir, "caddy"), WWW: filepath.Join(dir, "www"), Socket: sock}
+	if err := Apply(context.Background(), valid(), p, nil, time.Now()); !errors.Is(err, ErrCaddyDown) {
+		t.Fatalf("want ErrCaddyDown, got %v", err)
+	}
+	if _, err := os.Stat(p.Caddyfile()); err != nil {
+		t.Fatalf("Caddyfile not written: %v", err)
 	}
 }

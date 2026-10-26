@@ -50,6 +50,9 @@ type Server struct {
 	// Run executes systemctl; tests replace it.
 	Run service.Runner
 
+	// loaded receives the result of each background Caddy load in tests.
+	loaded chan error
+
 	dummyOnce sync.Once
 	dummyHash string
 }
@@ -96,6 +99,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleMe(w, r)
 	case rest == "/api/site":
 		s.handleSite(w, r)
+	case rest == "/api/panel/close":
+		s.handleClose(w, r)
 	case rest == "/stub/preview":
 		s.handleStubPreview(w, r)
 	case strings.HasPrefix(rest, "/static/"):
@@ -207,6 +212,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Path:     s.prefix + "/",
 		Expires:  expires,
 		HttpOnly: true,
+		Secure:   viaHTTPS(r),
 		SameSite: http.SameSiteStrictMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"username": admin.Username})
@@ -238,12 +244,31 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "требуется вход"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
+	set, err := site.Load(r.Context(), s.store, s.cfg)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
+		return
+	}
+	open, err := site.PanelOpen(r.Context(), s.store)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
+		return
+	}
+	url := site.PanelURL(set, s.cfg)
+	writeJSON(w, http.StatusOK, map[string]any{
 		"username": admin.Username,
 		"role":     string(s.cfg.Role),
-		"domain":   s.cfg.Domain,
+		"domain":   set.Domain,
 		"version":  s.version,
+		"open":     open && url != "",
+		"url":      url,
 	})
+}
+
+// viaHTTPS reports a request that came through Caddy on https://<domain>/.
+// The header is trusted because the panel listens on loopback only.
+func viaHTTPS(r *http.Request) bool {
+	return r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 // checkPost enforces POST + JSON + same-origin, which together with the
@@ -362,16 +387,24 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
 			return
 		}
-		warning := ""
-		if err := site.Apply(r.Context(), set, s.Site, s.now()); errors.Is(err, site.ErrCaddyDown) {
-			warning = err.Error()
-		} else if err != nil {
+		open, err := site.PanelOpen(r.Context(), s.store)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
+			return
+		}
+		change, err := s.prepare(r, set, site.PanelRoute(s.cfg, open))
+		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
 		resp := s.siteState(r, set)
-		resp.Warning = warning
+		if change == nil {
+			resp.Warning = site.ErrCaddyDown.Error()
+		} else {
+			resp.Warning = "Caddy применяет настройки. Сертификат для нового домена появится через минуту, нажмите «Проверить сертификат»."
+		}
 		writeJSON(w, http.StatusOK, resp)
+		s.loadLater(change)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -411,4 +444,67 @@ func (s *Server) handleStubPreview(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(page)
+}
+
+// handleClose hides the panel from the domain. Only `tigersb open` over SSH
+// brings it back, so a stolen session cannot reopen it later.
+func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
+	if !s.checkPost(w, r) {
+		return
+	}
+	if _, err := s.currentAdmin(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "требуется вход"})
+		return
+	}
+	set, err := site.Load(r.Context(), s.store, s.cfg)
+	if err == nil {
+		err = site.SetPanelOpen(r.Context(), s.store, false)
+	}
+	if err != nil {
+		log.Printf("close panel: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
+		return
+	}
+	change, err := s.prepare(r, set, nil)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+	s.loadLater(change)
+}
+
+// prepare renders and writes the site. It returns nil when Caddy is not
+// running: the files are on disk and Caddy reads them when it starts.
+func (s *Server) prepare(r *http.Request, set site.Settings, route *site.Route) (*site.Change, error) {
+	change, err := site.Render(set, s.Site, route, s.now())
+	if err != nil {
+		return nil, err
+	}
+	if err := change.Check(r.Context()); errors.Is(err, site.ErrCaddyDown) {
+		return nil, change.Write()
+	} else if err != nil {
+		return nil, err
+	}
+	return change, change.Write()
+}
+
+// loadLater hands the config to Caddy once the current response is sent:
+// Caddy waits for in-flight requests before it switches, and this request
+// may itself have come through Caddy.
+func (s *Server) loadLater(change *site.Change) {
+	if change == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		err := change.Load(ctx)
+		if err != nil {
+			log.Printf("caddy load: %v", err)
+		}
+		if s.loaded != nil {
+			s.loaded <- err
+		}
+	}()
 }

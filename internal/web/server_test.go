@@ -250,3 +250,50 @@ func TestStubPreview(t *testing.T) {
 		t.Fatalf("unknown template: %d", w.Code)
 	}
 }
+
+func TestSecureCookieBehindCaddy(t *testing.T) {
+	s := newTestServer(t)
+	r := httptest.NewRequest(http.MethodPost, "/"+secret+"/api/login", strings.NewReader(`{"username":"admin","password":"very-secret-pass"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Forwarded-Proto", "https")
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if c := w.Result().Cookies(); w.Code != http.StatusOK || len(c) != 1 || !c[0].Secure {
+		t.Fatalf("login via https: %d %+v", w.Code, c)
+	}
+	if c := login(t, s, "admin", "very-secret-pass").Result().Cookies(); c[0].Secure {
+		t.Fatal("an SSH-tunnel login over plain http must still work")
+	}
+}
+
+func TestClosePanel(t *testing.T) {
+	s := newTestServer(t)
+	c := login(t, s, "admin", "very-secret-pass").Result().Cookies()[0]
+	me := "/" + secret + "/api/me"
+	if w := do(s, http.MethodGet, me, "", c); !strings.Contains(w.Body.String(), `"url":"https://example.com/`+secret+`/"`) || !strings.Contains(w.Body.String(), `"open":true`) {
+		t.Fatalf("me before close: %s", w.Body.String())
+	}
+	// Publish the panel first, so the close has a route to take away.
+	if w := do(s, http.MethodPost, "/"+secret+"/api/site", `{"domain":"example.com","template":"books","name":"Клуб"}`, c); w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	if conf, _ := os.ReadFile(s.Site.Caddyfile()); !strings.Contains(string(conf), "reverse_proxy 127.0.0.1:30000") {
+		t.Fatalf("open panel is not routed:\n%s", conf)
+	}
+
+	if w := do(s, http.MethodPost, "/"+secret+"/api/panel/close", "", c); w.Code != http.StatusBadRequest && w.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("close without JSON must be refused: %d", w.Code)
+	}
+	if w := do(s, http.MethodPost, "/"+secret+"/api/panel/close", "{}", c); w.Code != http.StatusNoContent {
+		t.Fatalf("close: %d %s", w.Code, w.Body.String())
+	}
+	if conf, _ := os.ReadFile(s.Site.Caddyfile()); strings.Contains(string(conf), "reverse_proxy") {
+		t.Fatalf("closed panel is still routed:\n%s", conf)
+	}
+	if open, err := site.PanelOpen(context.Background(), s.store); err != nil || open {
+		t.Fatalf("panel.open after close: %v %v", open, err)
+	}
+	if w := do(s, http.MethodGet, me, "", c); !strings.Contains(w.Body.String(), `"open":false`) || !strings.Contains(w.Body.String(), `"url":"https://`) {
+		t.Fatalf("me after close: %s", w.Body.String())
+	}
+}

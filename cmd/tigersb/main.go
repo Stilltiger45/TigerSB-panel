@@ -40,9 +40,11 @@ const usage = `TigerSB panel
 Использование:
   tigersb init     первичная настройка (вызывает установщик)
   tigersb serve    запустить панель (вызывает systemd)
-  tigersb info     показать команду SSH-туннеля и адрес панели
+  tigersb info     показать адрес панели
   tigersb passwd   сменить пароль администратора
-  tigersb site     заглушка и сертификат: site apply | site status
+  tigersb site     заглушка и сертификат: site status | site apply | site set --domain …
+  tigersb open     открыть панель по адресу https://<домен>/<секретный путь>/
+  tigersb close    закрыть панель: по секретному пути будет открываться заглушка
   tigersb sleep    усыпить панель (VPN продолжает работать)
   tigersb wake     разбудить панель
   tigersb status   состояние панели
@@ -68,15 +70,13 @@ func main() {
 	case "site":
 		err = cmdSite(os.Args[2:])
 	case "sleep":
-		err = service.Sleep(service.ExecRunner)
-		if err == nil {
-			fmt.Println("Панель усыплена. VPN и подписки продолжают работать. Разбудить: tigersb wake")
-		}
+		err = cmdSleep(os.Args[2:])
 	case "wake":
-		err = service.Wake(service.ExecRunner)
-		if err == nil {
-			fmt.Println("Панель запущена. Адрес: tigersb info")
-		}
+		err = cmdWake(os.Args[2:])
+	case "open":
+		err = cmdOpen(os.Args[2:], true)
+	case "close":
+		err = cmdOpen(os.Args[2:], false)
 	case "status":
 		fmt.Println("Панель:", service.State(service.ExecRunner))
 	case "version":
@@ -137,11 +137,7 @@ func cmdInit(args []string) error {
 	if err := setAdmin(cfg.DBPath, *admin, password); err != nil {
 		return err
 	}
-	if err := config.Save(*cfgPath, cfg); err != nil {
-		return err
-	}
-	printInfo(cfg)
-	return nil
+	return config.Save(*cfgPath, cfg)
 }
 
 func cmdServe(args []string) error {
@@ -188,15 +184,12 @@ func cmdServe(args []string) error {
 }
 
 func cmdInfo(args []string) error {
-	fs := flag.NewFlagSet("info", flag.ExitOnError)
-	cfgPath := fs.String("config", config.DefaultPath, "путь к конфигу")
-	fs.Parse(args)
-	cfg, err := config.Load(*cfgPath)
+	env, err := openEnv("info", args)
 	if err != nil {
 		return err
 	}
-	printInfo(cfg)
-	return nil
+	defer env.st.Close()
+	return env.printInfo()
 }
 
 func cmdPasswd(args []string) error {
@@ -223,47 +216,199 @@ func cmdPasswd(args []string) error {
 	return nil
 }
 
-// cmdSite writes the maintenance page and Caddyfile and loads them into Caddy
-// (apply), or prints the site and certificate state (status).
-func cmdSite(args []string) error {
-	if len(args) == 0 || (args[0] != "apply" && args[0] != "status") {
-		return errors.New("использование: tigersb site apply | tigersb site status")
-	}
-	fs := flag.NewFlagSet("site", flag.ExitOnError)
+// env is what the site and access commands need.
+type env struct {
+	cfg   *config.Config
+	st    *store.Store
+	set   site.Settings
+	paths site.Paths
+	open  bool
+}
+
+func openEnv(name string, args []string, extra ...func(*flag.FlagSet)) (*env, error) {
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	cfgPath := fs.String("config", config.DefaultPath, "путь к конфигу")
-	fs.Parse(args[1:])
+	for _, f := range extra {
+		f(fs)
+	}
+	fs.Parse(args)
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer st.Close()
 	ctx := context.Background()
 	set, err := site.Load(ctx, st, cfg)
+	if err == nil {
+		var open bool
+		open, err = site.PanelOpen(ctx, st)
+		if err == nil {
+			return &env{cfg: cfg, st: st, set: set, paths: site.DefaultPaths(filepath.Dir(cfg.DBPath)), open: open}, nil
+		}
+	}
+	st.Close()
+	return nil, err
+}
+
+// panelUp is false only when systemd says the panel is stopped, so a sleeping
+// panel never gets a route that would answer 502 instead of the page.
+func panelUp() bool {
+	switch service.State(service.ExecRunner) {
+	case "inactive", "failed":
+		return false
+	}
+	return true
+}
+
+// apply writes the site and loads it into Caddy, publishing the panel when
+// published is true.
+func (e *env) apply(published bool) error {
+	err := site.Apply(context.Background(), e.set, e.paths, site.PanelRoute(e.cfg, published), time.Now())
+	if errors.Is(err, site.ErrCaddyDown) {
+		fmt.Println(err)
+		return nil
+	}
+	return err
+}
+
+func (e *env) printInfo() error {
+	url := site.PanelURL(e.set, e.cfg)
+	switch {
+	case url == "":
+		fmt.Println("Домен не задан, поэтому панель открывается только через SSH-туннель (ниже).")
+		fmt.Println("Задать домен: tigersb site set --domain vpn.example.com --email you@example.com")
+	case !e.open:
+		fmt.Println("Панель закрыта: по секретному пути открывается заглушка.")
+		fmt.Println("Открыть: tigersb open")
+	case !panelUp():
+		fmt.Println("Панель спит. Разбудить: tigersb wake")
+	default:
+		fmt.Printf("Панель открыта:\n   %s\n\nЗакрыть после настройки: tigersb close\n", url)
+	}
+	_, port, _ := net.SplitHostPort(e.cfg.Listen)
+	fmt.Printf(`
+Запасной вход через SSH-туннель работает всегда, даже когда панель закрыта.
+На своём компьютере (не на сервере) выполните:
+   ssh -N -L 8080:127.0.0.1:%s root@<IP сервера>
+и, пока команда работает, откройте http://localhost:8080/%s/
+
+Сохраните секретный путь: без него панель не откроется.
+`, port, e.cfg.SecretPath)
+	return nil
+}
+
+func cmdOpen(args []string, open bool) error {
+	name := "close"
+	if open {
+		name = "open"
+	}
+	e, err := openEnv(name, args)
 	if err != nil {
 		return err
 	}
-	paths := site.DefaultPaths(filepath.Dir(cfg.DBPath))
-	if args[0] == "apply" {
-		err := site.Apply(ctx, set, paths, time.Now())
-		if err != nil && !errors.Is(err, site.ErrCaddyDown) {
+	defer e.st.Close()
+	if open && e.set.Domain == "" {
+		return errors.New("сначала задайте домен: tigersb site set --domain vpn.example.com")
+	}
+	if err := site.SetPanelOpen(context.Background(), e.st, open); err != nil {
+		return err
+	}
+	e.open = open
+	if open && !panelUp() {
+		if err := service.Wake(service.ExecRunner); err != nil {
 			return err
 		}
-		if err != nil {
-			fmt.Println(err)
-		} else {
-			fmt.Println("Настройки сайта применены.")
+	}
+	if err := e.apply(open); err != nil {
+		return err
+	}
+	if !open {
+		fmt.Println("Панель закрыта: по секретному пути теперь открывается заглушка.")
+		fmt.Println("Открыть снова: tigersb open")
+		return nil
+	}
+	return e.printInfo()
+}
+
+func cmdSleep(args []string) error {
+	e, err := openEnv("sleep", args)
+	if err != nil {
+		return err
+	}
+	defer e.st.Close()
+	if err := service.Sleep(service.ExecRunner); err != nil {
+		return err
+	}
+	if err := e.apply(false); err != nil {
+		return err
+	}
+	fmt.Println("Панель усыплена: по секретному пути открывается заглушка, VPN и подписки работают. Разбудить: tigersb wake")
+	return nil
+}
+
+func cmdWake(args []string) error {
+	e, err := openEnv("wake", args)
+	if err != nil {
+		return err
+	}
+	defer e.st.Close()
+	if err := service.Wake(service.ExecRunner); err != nil {
+		return err
+	}
+	if err := e.apply(e.open); err != nil {
+		return err
+	}
+	fmt.Println("Панель запущена.")
+	return e.printInfo()
+}
+
+// cmdSite prints the site and certificate state (status), writes and loads
+// it again (apply), or changes the domain and email (set).
+func cmdSite(args []string) error {
+	if len(args) == 0 || (args[0] != "apply" && args[0] != "status" && args[0] != "set") {
+		return errors.New("использование: tigersb site status | site apply | site set --domain vpn.example.com [--email you@example.com]")
+	}
+	var domain, email string
+	e, err := openEnv("site", args[1:], func(fs *flag.FlagSet) {
+		fs.StringVar(&domain, "domain", "", "домен сервера")
+		fs.StringVar(&email, "email", "", "email для Let's Encrypt")
+	})
+	if err != nil {
+		return err
+	}
+	defer e.st.Close()
+	ctx := context.Background()
+	switch args[0] {
+	case "set":
+		if domain == "" && email == "" {
+			return errors.New("укажите --domain и/или --email")
 		}
+		if domain != "" {
+			e.set.Domain = domain
+		}
+		if email != "" {
+			e.set.Email = email
+		}
+		e.set.Normalize()
+		if err := site.Save(ctx, e.st, e.set); err != nil {
+			return err
+		}
+		fallthrough
+	case "apply":
+		if err := e.apply(e.open && panelUp()); err != nil {
+			return err
+		}
+		fmt.Println("Настройки сайта применены.")
 	}
-	domain := set.Domain
-	if domain == "" {
-		domain = "не задан, заглушка открывается по http://<IP сервера>/"
+	domainText := e.set.Domain
+	if domainText == "" {
+		domainText = "не задан, заглушка открывается по http://<IP сервера>/"
 	}
-	fmt.Printf("Домен: %s\nЗаглушка: %s «%s»\nCaddy: %s\n", domain, set.Template, set.Name, service.UnitState(service.ExecRunner, service.CaddyUnit))
-	c := site.CheckCert(ctx, set.Domain, site.LocalTLS, nil, time.Now())
+	fmt.Printf("Домен: %s\nЗаглушка: %s «%s»\nCaddy: %s\n", domainText, e.set.Template, e.set.Name, service.UnitState(service.ExecRunner, service.CaddyUnit))
+	c := site.CheckCert(ctx, e.set.Domain, site.LocalTLS, nil, time.Now())
 	switch c.State {
 	case site.CertOK, site.CertExpiring:
 		fmt.Printf("Сертификат: %s, действует до %s (%d дн.)\n", c.Issuer, c.NotAfter.Format("2006-01-02"), c.DaysLeft)
@@ -332,23 +477,4 @@ func randomPort() (int, error) {
 		}
 	}
 	return 0, errors.New("не удалось найти свободный порт")
-}
-
-func printInfo(cfg *config.Config) {
-	_, port, _ := net.SplitHostPort(cfg.Listen)
-	host := cfg.Domain
-	if host == "" {
-		host = "<IP сервера>"
-	}
-	fmt.Printf(`
-Панель доступна только через SSH-туннель.
-
-1. На своём компьютере выполните:
-   ssh -N -L 8080:127.0.0.1:%s <пользователь>@%s
-
-2. Пока туннель открыт, откройте в браузере:
-   http://localhost:8080/%s/
-
-Сохраните секретный путь: без него панель не откроется даже через туннель.
-`, port, host, cfg.SecretPath)
 }
