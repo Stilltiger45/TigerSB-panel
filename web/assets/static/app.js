@@ -9,7 +9,7 @@ const CERT = {
 };
 const CADDY = { active: "работает", activating: "запускается", inactive: "остановлен", failed: "ошибка запуска", unknown: "неизвестно" };
 const $ = (id) => document.getElementById(id);
-const TABS = ["overview", "site", "control", "about"];
+const TABS = ["overview", "users", "protocols", "site", "control", "about"];
 
 async function api(path, body) {
   const opts = { credentials: "same-origin" };
@@ -37,6 +37,8 @@ function showTab() {
   }
   for (const id of TABS) $("tab-" + id).hidden = id !== known;
   if (known === "control") loadControl();
+  if (known === "users") loadUsers();
+  if (known === "protocols") loadProtocols();
 }
 
 function setPill(el, cert) {
@@ -541,4 +543,5 @@ async function load() {
 }
 
 window.addEventListener("hashchange", showTab);
-load().catch((err) => message(err.message, true));
+// vpn.js loads after this file; start once every script is in.
+window.addEventListener("DOMContentLoaded", () => load().catch((err) => message(err.message, true)));

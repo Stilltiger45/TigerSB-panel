@@ -1,0 +1,22 @@
+[Unit]
+Description=TigerSB Xray (Docker)
+Documentation=https://github.com/Stilltiger45/TigerSB-panel
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Writes the config from the database, then becomes `docker run` of the
+# pinned Xray image with the host network.
+ExecStart=/usr/local/bin/tigersb xray run --config /etc/tigersb/config.json
+ExecStop=/usr/local/bin/tigersb xray stop --config /etc/tigersb/config.json
+Environment=DOCKER_CONFIG=/var/lib/tigersb/docker
+Restart=always
+RestartSec=5s
+# The first start may pull the image.
+TimeoutStartSec=5min
+TimeoutStopSec=20s
+
+[Install]
+WantedBy=multi-user.target

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -26,6 +27,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
+	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
 
 const (
@@ -59,6 +61,13 @@ type Server struct {
 	// HealthBase holds probe targets for the checks; tests replace them.
 	HealthBase health.Env
 
+	// Xray is the VPN core in Docker and the edge router on 443.
+	Xray *xray.Runtime
+	// LocalIPs lists the server's addresses, for links.
+	LocalIPs func() ([]net.IP, error)
+	// xrayMu keeps user and protocol changes in order.
+	xrayMu sync.Mutex
+
 	// loaded receives the result of each background Caddy load in tests.
 	loaded chan error
 
@@ -82,6 +91,8 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, version string) *Ser
 		CertAddr: site.LocalTLS,
 		Run:      service.ExecRunner,
 		GitHub:   &http.Client{Timeout: 20 * time.Second},
+		Xray:     xray.DefaultRuntime(filepath.Dir(cfg.DBPath)),
+		LocalIPs: xray.LocalIPs,
 	}
 }
 
@@ -123,6 +134,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleUpdate(w, r)
 	case rest == "/api/control/restore":
 		s.handleRestore(w, r)
+	case rest == "/api/users":
+		s.handleUsers(w, r)
+	case rest == "/api/users/add":
+		s.handleUserAdd(w, r)
+	case rest == "/api/users/update":
+		s.handleUserUpdate(w, r)
+	case rest == "/api/users/delete":
+		s.handleUserDelete(w, r)
+	case rest == "/api/users/qr":
+		s.handleUserQR(w, r)
+	case rest == "/api/protocols":
+		s.handleProtocols(w, r)
+	case rest == "/api/protocols/keys":
+		s.handleKeys(w, r)
+	case rest == "/api/protocols/check":
+		s.handleSNICheck(w, r)
+	case rest == "/api/protocols/scan":
+		s.handleScan(w, r)
 	case rest == "/stub/preview":
 		s.handleStubPreview(w, r)
 	case strings.HasPrefix(rest, "/static/"):
@@ -404,11 +433,21 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		if err := xray.CheckDomainFree(r.Context(), s.store, set.Domain); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		if err := site.Save(r.Context(), s.store, set); err != nil {
 			log.Printf("save site: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
 			return
 		}
+		// Port 443 must send the new domain to Caddy.
+		s.xrayMu.Lock()
+		if err := s.Xray.Sync(r.Context(), s.store, set.Domain, false); err != nil {
+			log.Printf("edge routes: %v", err)
+		}
+		s.xrayMu.Unlock()
 		open, err := site.PanelOpen(r.Context(), s.store)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})

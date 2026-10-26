@@ -316,3 +316,45 @@ func TestCheckGitHub(t *testing.T) {
 		t.Fatalf("offline: %+v", c)
 	}
 }
+
+// A rollback to a version without the edge router stops it, so the older
+// Caddy can take port 443 back; going forward restarts edge and Xray.
+func TestRollbackAcrossEdge(t *testing.T) {
+	f := newFixture(t)
+	u := newUpdater(f)
+	ctx := context.Background()
+	old, err := CreatePoint(ctx, f.l, f.st, "main-1111111", "до edge", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(f.l.Units, EdgeUnit), "edge")
+	write(t, filepath.Join(f.l.Units, XrayUnit), "xray")
+	newer, err := CreatePoint(ctx, f.l, f.st, "main-2222222", "с edge", time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := u.restore(ctx, old.ID, false, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(f.sys.calls, "\n")
+	stop := strings.Index(joined, "systemctl stop "+EdgeUnit)
+	caddy := strings.Index(joined, "systemctl restart tigersb-caddy.service")
+	if stop < 0 || caddy < 0 || stop > caddy || !strings.Contains(joined, "systemctl stop "+XrayUnit) {
+		t.Fatalf("edge must stop before Caddy restarts:\n%s", joined)
+	}
+	if strings.Contains(joined, "restart "+EdgeUnit) {
+		t.Fatalf("edge restarted after rollback to a version without it:\n%s", joined)
+	}
+
+	f.sys.calls = nil
+	if err := u.restore(ctx, newer.ID, false, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	joined = strings.Join(f.sys.calls, "\n")
+	for _, want := range []string{"systemctl enable " + EdgeUnit, "systemctl restart " + EdgeUnit, "systemctl restart " + XrayUnit} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("no %q in:\n%s", want, joined)
+		}
+	}
+}

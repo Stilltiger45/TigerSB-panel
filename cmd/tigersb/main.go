@@ -30,6 +30,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
 	"github.com/Stilltiger45/TigerSB-panel/internal/web"
+	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 	"github.com/Stilltiger45/TigerSB-panel/web/assets"
 )
 
@@ -52,6 +53,8 @@ const usage = `TigerSB panel
   tigersb update   обновить панель с GitHub (перед этим создаётся точка восстановления)
   tigersb restore  точки восстановления: restore list | restore create | restore apply <имя>
   tigersb monitor  снять показатели и проверить сервер (вызывает таймер раз в 5 минут)
+  tigersb xray     VPN-ядро в Docker: xray status | xray apply
+  tigersb edge     делить порт 443 между сайтом и VPN (вызывает systemd)
   tigersb version  версия
 `
 
@@ -91,6 +94,10 @@ func main() {
 		err = cmdRestore(os.Args[2:])
 	case "job":
 		err = cmdJob(os.Args[2:])
+	case "xray":
+		err = cmdXray(os.Args[2:])
+	case "edge":
+		err = cmdEdge(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -285,6 +292,10 @@ func panelUp() bool {
 // apply writes the site and loads it into Caddy, publishing the panel when
 // published is true.
 func (e *env) apply(published bool) error {
+	// Port 443 sends the domain to Caddy; keep that in step with the site.
+	if err := e.runtime().Sync(context.Background(), e.st, e.set.Domain, false); err != nil {
+		fmt.Fprintln(os.Stderr, "маршруты порта 443:", err)
+	}
 	err := site.Apply(context.Background(), e.set, e.paths, site.PanelRoute(e.cfg, published), time.Now())
 	if errors.Is(err, site.ErrCaddyDown) {
 		fmt.Println(err)
@@ -407,6 +418,9 @@ func cmdSite(args []string) error {
 		}
 		if domain != "" {
 			e.set.Domain = domain
+			if err := xray.CheckDomainFree(ctx, e.st, strings.ToLower(domain)); err != nil {
+				return err
+			}
 		}
 		if email != "" {
 			e.set.Email = email

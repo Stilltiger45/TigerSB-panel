@@ -14,7 +14,9 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/metrics"
+	"github.com/Stilltiger45/TigerSB-panel/internal/service"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
+	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
 
 // checkEvery is how often the monitor timer asks GitHub for a new version.
@@ -39,6 +41,11 @@ func cmdMonitor(args []string) error {
 	now := time.Now()
 	if _, err := metrics.Collect(ctx, e.st, metrics.Host, now); err != nil {
 		fmt.Fprintln(os.Stderr, "показатели:", err)
+	}
+	if service.UnitState(service.ExecRunner, xray.Unit) == "active" {
+		if err := e.runtime().Collect(ctx, e.st, now); err != nil {
+			fmt.Fprintln(os.Stderr, "трафик пользователей:", err)
+		}
 	}
 	if c, _ := health.LastCheck(ctx, e.st); c == nil || now.Sub(c.Checked) > checkEvery {
 		c := update.CheckGitHub(ctx, http.DefaultClient, version, now)

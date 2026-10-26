@@ -216,7 +216,7 @@ main_sha() {
 	fi
 }
 
-UNITS="tigersb.service tigersb-caddy.service tigersb-monitor.service tigersb-monitor.timer tigersb-update.service"
+UNITS="tigersb.service tigersb-caddy.service tigersb-edge.service tigersb-xray.service tigersb-monitor.service tigersb-monitor.timer tigersb-update.service"
 
 install_unit() {
 	local src name
@@ -241,14 +241,50 @@ start_monitor() {
 	systemctl enable --now tigersb-monitor.timer
 }
 
-# check_ports stops a fresh install when another web server holds 80 or 443.
+# check_ports stops a fresh install when another web server holds 80 or 443,
+# and warns when the default gRPC port is taken.
 check_ports() {
 	command -v ss >/dev/null || return 0
 	local port who
 	for port in 80 443; do
-		who="$(ss -ltnpH "sport = :$port" 2>/dev/null | grep -v '"caddy"' | head -n1 || true)"
+		who="$(ss -ltnpH "sport = :$port" 2>/dev/null | grep -v -e '"caddy"' -e '"tigersb"' | head -n1 || true)"
 		[ -z "$who" ] || die "порт $port занят ($who). Остановите этот веб-сервер (например, systemctl disable --now nginx) и запустите установщик снова"
 	done
+	who="$(ss -ltnpH "sport = :8443" 2>/dev/null | grep -v '"xray"' | head -n1 || true)"
+	[ -z "$who" ] || echo "Внимание: порт 8443 занят ($who). Поменяйте порт gRPC на вкладке «Протоколы»." >&2
+}
+
+# install_docker makes sure Docker runs: Xray lives in a container. It prints
+# nothing and returns 1 when Docker cannot be installed here.
+install_docker() {
+	if ! command -v docker >/dev/null; then
+		if ! command -v apt-get >/dev/null; then
+			echo "Docker не найден, а apt-get нет: установите Docker вручную и запустите установщик с --update." >&2
+			return 1
+		fi
+		echo "Устанавливаю Docker (пакет docker.io)..." >&2
+		DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || true
+		DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io >&2 || {
+			echo "Docker не установился: VPN не запустится, пока его нет." >&2
+			return 1
+		}
+	fi
+	systemctl enable --now docker.service >&2 || return 1
+}
+
+# start_vpn starts the edge router on 443 and Xray in Docker. Run it after
+# start_site: with a domain Caddy moves to 127.0.0.1:8444 and frees 443.
+start_vpn() {
+	install -d -m 0700 "$DATA_DIR/edge" "$DATA_DIR/docker"
+	systemctl enable tigersb-edge.service tigersb-xray.service
+	systemctl restart tigersb-edge.service
+	if install_docker; then
+		local image
+		image="$("$BIN" xray image)"
+		echo "Скачиваю образ Xray ($image)..."
+		docker pull -q "$image" >/dev/null || echo "Образ не скачался, Xray попробует ещё раз при запуске." >&2
+		systemctl restart tigersb-xray.service
+	fi
 }
 
 # install_caddy puts the pinned Caddy release into $LIB_DIR. It prints
@@ -289,6 +325,7 @@ restore() {
 	install_unit
 	systemctl enable --now tigersb.service
 	start_site
+	start_vpn
 	start_monitor
 	"$BIN" info
 }
@@ -310,6 +347,7 @@ do_update() {
 	if [ -n "$caddy_changed" ]; then
 		systemctl restart tigersb-caddy.service
 	fi
+	start_vpn
 	start_monitor
 	echo "Панель обновлена до $("$BIN" version), состояние: $(systemctl is-active tigersb.service || true)."
 	"$BIN" info
@@ -346,6 +384,7 @@ main() {
 	install_unit
 	systemctl enable --now tigersb.service
 	start_site
+	start_vpn
 	start_monitor
 	echo
 	"$BIN" site status --config "$CONF_DIR/config.json" || true

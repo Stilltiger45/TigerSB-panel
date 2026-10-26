@@ -66,6 +66,9 @@ func TestCaddyfile(t *testing.T) {
 		"vpn.example.com {",
 		"email me@example.com",
 		"disable_http_challenge",
+		"alt_tlsalpn_port 8444",
+		"https_port 8444",
+		"default_bind 127.0.0.1",
 		"root * /d/www",
 		"try_files {path} /index.html",
 		"-Server",
@@ -77,7 +80,7 @@ func TestCaddyfile(t *testing.T) {
 	s := valid()
 	s.Domain, s.Email = "", ""
 	got = RenderCaddyfile(s, p, nil)
-	if !strings.Contains(got, ":80 {") || strings.Contains(got, "tls") {
+	if !strings.Contains(got, ":80 {") || strings.Contains(got, "tls") || strings.Contains(got, "default_bind") {
 		t.Errorf("no-domain Caddyfile must serve plain HTTP:\n%s", got)
 	}
 }
