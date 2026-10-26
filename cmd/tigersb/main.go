@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,6 +26,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/auth"
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
+	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/web"
 	"github.com/Stilltiger45/TigerSB-panel/web/assets"
@@ -40,6 +42,7 @@ const usage = `TigerSB panel
   tigersb serve    запустить панель (вызывает systemd)
   tigersb info     показать команду SSH-туннеля и адрес панели
   tigersb passwd   сменить пароль администратора
+  tigersb site     заглушка и сертификат: site apply | site status
   tigersb sleep    усыпить панель (VPN продолжает работать)
   tigersb wake     разбудить панель
   tigersb status   состояние панели
@@ -62,6 +65,8 @@ func main() {
 		err = cmdInfo(os.Args[2:])
 	case "passwd":
 		err = cmdPasswd(os.Args[2:])
+	case "site":
+		err = cmdSite(os.Args[2:])
 	case "sleep":
 		err = service.Sleep(service.ExecRunner)
 		if err == nil {
@@ -215,6 +220,58 @@ func cmdPasswd(args []string) error {
 		return err
 	}
 	fmt.Println("Пароль обновлён, все активные сессии этого администратора завершены.")
+	return nil
+}
+
+// cmdSite writes the maintenance page and Caddyfile and loads them into Caddy
+// (apply), or prints the site and certificate state (status).
+func cmdSite(args []string) error {
+	if len(args) == 0 || (args[0] != "apply" && args[0] != "status") {
+		return errors.New("использование: tigersb site apply | tigersb site status")
+	}
+	fs := flag.NewFlagSet("site", flag.ExitOnError)
+	cfgPath := fs.String("config", config.DefaultPath, "путь к конфигу")
+	fs.Parse(args[1:])
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ctx := context.Background()
+	set, err := site.Load(ctx, st, cfg)
+	if err != nil {
+		return err
+	}
+	paths := site.DefaultPaths(filepath.Dir(cfg.DBPath))
+	if args[0] == "apply" {
+		err := site.Apply(ctx, set, paths, time.Now())
+		if err != nil && !errors.Is(err, site.ErrCaddyDown) {
+			return err
+		}
+		if err != nil {
+			fmt.Println(err)
+		} else {
+			fmt.Println("Настройки сайта применены.")
+		}
+	}
+	domain := set.Domain
+	if domain == "" {
+		domain = "не задан, заглушка открывается по http://<IP сервера>/"
+	}
+	fmt.Printf("Домен: %s\nЗаглушка: %s «%s»\nCaddy: %s\n", domain, set.Template, set.Name, service.UnitState(service.ExecRunner, service.CaddyUnit))
+	c := site.CheckCert(ctx, set.Domain, site.LocalTLS, nil, time.Now())
+	switch c.State {
+	case site.CertOK, site.CertExpiring:
+		fmt.Printf("Сертификат: %s, действует до %s (%d дн.)\n", c.Issuer, c.NotAfter.Format("2006-01-02"), c.DaysLeft)
+	case site.CertUntrusted:
+		fmt.Printf("Сертификат: не доверенный (%s): %s\n", c.Issuer, c.Error)
+	case site.CertMissing:
+		fmt.Println("Сертификат: ещё не выпущен. Caddy получает его через порт 443, проверьте, что домен указывает на этот сервер.")
+	}
 	return nil
 }
 

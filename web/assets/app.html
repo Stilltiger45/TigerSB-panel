@@ -5,34 +5,109 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>TigerSB</title>
+<link rel="icon" href="static/tiger.svg" type="image/svg+xml">
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
 <header class="top">
-  <strong>TigerSB</strong>
-  <span id="who" class="muted"></span>
+  <div class="brand"><img class="logo" src="static/tiger.svg" alt=""><span>Tiger<b>SB</b></span></div>
+  <nav class="tabs">
+    <a href="#overview" data-tab="overview">Обзор</a>
+    <a href="#site" data-tab="site">Сайт и сертификат</a>
+    <a href="#about" data-tab="about">О панели</a>
+  </nav>
+  <span class="who" id="who"></span>
   <button id="logout" class="link">Выйти</button>
 </header>
+
 <main class="wrap">
-  <section class="card">
-    <h2>Этот сервер</h2>
-    <dl class="facts">
-      <dt>Роль</dt><dd id="role">—</dd>
-      <dt>Домен</dt><dd id="domain">—</dd>
-      <dt>Версия</dt><dd id="version">—</dd>
-    </dl>
+  <section id="tab-overview" class="grid">
+    <div class="glass">
+      <h2>Этот сервер</h2>
+      <dl class="facts">
+        <dt>Роль</dt><dd id="role">—</dd>
+        <dt>Домен</dt><dd id="domain">—</dd>
+        <dt>Версия</dt><dd id="version">—</dd>
+      </dl>
+    </div>
+    <div class="glass">
+      <h2>Сертификат</h2>
+      <p><span id="ov-cert" class="pill off">проверяю…</span></p>
+      <p id="ov-cert-text" class="muted"></p>
+      <p><a href="#site">Настроить домен и заглушку</a></p>
+    </div>
+    <div class="glass">
+      <h2>Скоро здесь</h2>
+      <ul class="soon">
+        <li>Серверы и точки маршрутизации</li>
+        <li>Подключения: gRPC, XHTTP, каскад, Yandex CDN, TUIC</li>
+        <li>CDN-домены</li>
+        <li>Пользователи, устройства и подписки</li>
+      </ul>
+    </div>
   </section>
-  <section class="card">
-    <h2>Скоро здесь</h2>
-    <ul class="muted">
-      <li>Серверы и точки маршрутизации</li>
-      <li>Подключения: gRPC, XHTTP, каскад, Yandex CDN, TUIC</li>
-      <li>CDN-домены</li>
-      <li>Пользователи, устройства и подписки</li>
-      <li>Заглушка «Технические работы»</li>
-    </ul>
+
+  <section id="tab-site" class="grid" hidden>
+    <div class="glass">
+      <h2>Домен и сертификат</h2>
+      <p class="muted">Caddy сам получает сертификат Let's Encrypt через порт 443 и продлевает его за месяц до окончания. Порт 80 остаётся закрытым.</p>
+      <form id="site-form">
+        <label>Домен
+          <input name="domain" placeholder="vpn.example.com" autocomplete="off" spellcheck="false">
+          <span class="hint">A-запись домена должна указывать на этот сервер. Без домена заглушка открывается по http://IP/.</span>
+        </label>
+        <label>Email для Let's Encrypt
+          <input name="email" type="email" placeholder="необязательно" autocomplete="email">
+          <span class="hint">Сюда придёт письмо, если сертификат не удастся продлить.</span>
+        </label>
+        <fieldset class="templates" id="templates">
+          <legend class="muted">Заглушка «Технические работы»</legend>
+        </fieldset>
+        <label>Название сайта на заглушке
+          <input name="sitename" maxlength="60" required>
+        </label>
+        <div class="row">
+          <button type="submit" id="save">Сохранить и применить</button>
+          <button type="button" class="ghost" id="recheck">Проверить сертификат</button>
+        </div>
+        <p id="site-msg" class="notice" hidden></p>
+      </form>
+    </div>
+    <div class="glass">
+      <h2>Состояние</h2>
+      <dl class="facts">
+        <dt>Сертификат</dt><dd><span id="cert" class="pill off">—</span></dd>
+        <dt>Выдан</dt><dd id="cert-issuer">—</dd>
+        <dt>Действует до</dt><dd id="cert-until">—</dd>
+        <dt>Caddy</dt><dd id="caddy">—</dd>
+      </dl>
+      <p id="cert-error" class="faint"></p>
+      <h2>Предпросмотр заглушки</h2>
+      <iframe id="preview" class="preview" title="Предпросмотр заглушки" sandbox></iframe>
+    </div>
+  </section>
+
+  <section id="tab-about" hidden>
+    <div class="glass">
+      <h2>О панели</h2>
+      <p class="muted">TigerSB — свободная программа под лицензией GPL-3.0. Исходный код: <a href="https://github.com/Stilltiger45/TigerSB-panel" rel="noreferrer" target="_blank">github.com/Stilltiger45/TigerSB-panel</a>. Версия <span id="about-version">—</span>.</p>
+      <h2>Компоненты и лицензии</h2>
+      <table class="lic">
+        <tr><th>Компонент</th><th>Лицензия</th><th>Как используется</th></tr>
+        <tr><td>Caddy 2.11.4</td><td>Apache-2.0</td><td>веб-сервер заглушки и сертификаты; официальная сборка без изменений, текст лицензии в /usr/local/lib/tigersb/caddy.LICENSE</td></tr>
+        <tr><td>modernc.org/sqlite, libc, mathutil, memory</td><td>BSD-3-Clause</td><td>база данных панели</td></tr>
+        <tr><td>golang.org/x/crypto, x/sys, x/term</td><td>BSD-3-Clause</td><td>Argon2id, ввод пароля</td></tr>
+        <tr><td>github.com/google/uuid, remyoudompheng/bigfft</td><td>BSD-3-Clause</td><td>зависимости SQLite</td></tr>
+        <tr><td>github.com/dustin/go-humanize</td><td>MIT</td><td>зависимость SQLite</td></tr>
+        <tr><td>Логотип и цвета TigerSB-client</td><td>GPL-3.0</td><td>тот же автор, общий стиль</td></tr>
+        <tr><td>web-panel-proxy</td><td>MIT</td><td>идея выпуска сертификата только через порт 443 (TLS-ALPN) и закреплённой версии Caddy</td></tr>
+        <tr><td>OlConnect_manager</td><td>WTFPL</td><td>идея установки и удаления одной командой</td></tr>
+      </table>
+      <p class="faint">Полный список с текстами: <a href="https://github.com/Stilltiger45/TigerSB-panel/blob/main/THIRD_PARTY_NOTICES.md" rel="noreferrer" target="_blank">THIRD_PARTY_NOTICES.md</a>.</p>
+    </div>
   </section>
 </main>
+<footer class="foot">TigerSB · GPL-3.0</footer>
 <script src="static/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Name}} — перерыв на обслуживание</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3efe6;color:#2b2a33;font:17px/1.6 "Palatino Linotype",Palatino,"Book Antiqua",serif;padding:24px;box-sizing:border-box}
+main{max-width:540px;border-left:4px solid #8c2f39;padding:8px 0 8px 24px}
+h1{font-size:2rem;margin:.2em 0;color:#8c2f39}
+blockquote{margin:1.2em 0;font-style:italic;color:#55525f}
+p{margin:.5em 0}
+footer{margin-top:1.8em;font:13px/1.4 Arial,sans-serif;color:#8a8794;text-transform:uppercase;letter-spacing:.08em}
+</style>
+</head>
+<body>
+<main>
+<svg width="84" height="48" viewBox="0 0 84 48" aria-hidden="true">
+<rect x="4" y="8" width="12" height="38" rx="2" fill="#8c2f39"/>
+<rect x="18" y="4" width="10" height="42" rx="2" fill="#c9a227"/>
+<rect x="30" y="12" width="14" height="34" rx="2" fill="#3e6d8c"/>
+<rect x="48" y="10" width="10" height="36" rx="2" transform="rotate(12 53 28)" fill="#5c7a4b"/>
+<path d="M2 46h80" stroke="#55525f" stroke-width="3" stroke-linecap="round"/>
+</svg>
+<h1>{{.Name}}</h1>
+<p>Мы расставляем книги по новым полкам и обновляем сайт клуба.</p>
+<blockquote>Следующая встреча и список чтения появятся здесь сразу после обновления.</blockquote>
+<footer>Технические работы · © {{.Year}} {{.Name}}</footer>
+</main>
+</body>
+</html>

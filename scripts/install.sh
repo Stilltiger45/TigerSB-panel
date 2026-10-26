@@ -14,8 +14,18 @@ REPO="Stilltiger45/TigerSB-panel"
 BIN=/usr/local/bin/tigersb
 CONF_DIR=/etc/tigersb
 DATA_DIR=/var/lib/tigersb
-UNIT=/etc/systemd/system/tigersb.service
 GO_VERSION=1.26.0
+
+# Caddy serves the maintenance page and gets the certificate. Pinned release
+# with checksums from caddy_2.11.4_checksums.txt (Apache-2.0, unmodified).
+LIB_DIR=/usr/local/lib/tigersb
+CADDY_VERSION=2.11.4
+caddy_sha512() {
+	case "$1" in
+		amd64) echo 8220d1f013b6f27510247b2360c9e0ca9f018feebd82515f07635318b34ff9777ccc8fd0b6e6f2486ce3a33fe389fbb7db12d05baa474f4587509fb4f5ebf1c9 ;;
+		arm64) echo d5a7c423853c24a799765e0e8210d5c7c22a8f56ed37a3cae2fb9f58be138853c02b4efd6b59d576e6d8c7c0d30b9c1592deeaa6a536ff69bcca23b8c1ea709c ;;
+	esac
+}
 
 binary=""
 role=""
@@ -185,22 +195,65 @@ get_binary() {
 }
 
 install_unit() {
-	local src
+	local src name
 	src="$(repo_dir)"
-	if [ -n "$src" ] && [ -f "$src/deploy/tigersb.service" ]; then
-		install -m 0644 "$src/deploy/tigersb.service" "$UNIT"
-	else
-		curl -fsSL -o "$UNIT" "https://raw.githubusercontent.com/$REPO/main/deploy/tigersb.service"
-		chmod 0644 "$UNIT"
-	fi
+	for name in tigersb.service tigersb-caddy.service; do
+		if [ -n "$src" ] && [ -f "$src/deploy/$name" ]; then
+			install -m 0644 "$src/deploy/$name" "/etc/systemd/system/$name"
+		else
+			curl -fsSL -o "/etc/systemd/system/$name" "https://raw.githubusercontent.com/$REPO/main/deploy/$name"
+			chmod 0644 "/etc/systemd/system/$name"
+		fi
+	done
 	systemctl daemon-reload
+}
+
+# check_ports stops a fresh install when another web server holds 80 or 443.
+check_ports() {
+	command -v ss >/dev/null || return 0
+	local port who
+	for port in 80 443; do
+		who="$(ss -ltnpH "sport = :$port" 2>/dev/null | grep -v '"caddy"' | head -n1 || true)"
+		[ -z "$who" ] || die "порт $port занят ($who). Остановите этот веб-сервер (например, systemctl disable --now nginx) и запустите установщик снова"
+	done
+}
+
+# install_caddy puts the pinned Caddy release into $LIB_DIR. It prints
+# "changed" when a new binary was installed.
+install_caddy() {
+	if [ -x "$LIB_DIR/caddy" ] && "$LIB_DIR/caddy" version 2>/dev/null | grep -q "^v$CADDY_VERSION "; then
+		return
+	fi
+	local dir
+	dir="$(mktemp -d)"
+	echo "Скачиваю Caddy $CADDY_VERSION..." >&2
+	curl -fsSL -o "$dir/caddy.tar.gz" \
+		"https://github.com/caddyserver/caddy/releases/download/v$CADDY_VERSION/caddy_${CADDY_VERSION}_linux_$arch.tar.gz"
+	echo "$(caddy_sha512 "$arch")  $dir/caddy.tar.gz" | sha512sum -c --quiet - >&2 || die "контрольная сумма Caddy не совпала"
+	tar -xzf "$dir/caddy.tar.gz" -C "$dir" caddy LICENSE
+	install -d -m 0755 "$LIB_DIR"
+	install -m 0755 "$dir/caddy" "$LIB_DIR/caddy"
+	install -m 0644 "$dir/LICENSE" "$LIB_DIR/caddy.LICENSE"
+	rm -rf "$dir"
+	echo changed
+}
+
+# start_site writes the maintenance page and Caddyfile, then starts Caddy.
+start_site() {
+	install -d -m 0700 "$DATA_DIR/caddy"
+	install -d -m 0755 "$DATA_DIR/www"
+	"$BIN" site apply --config "$CONF_DIR/config.json" >/dev/null
+	systemctl enable --now tigersb-caddy.service
 }
 
 # restore sets the panel up from a config and database unpacked from a backup.
 restore() {
 	echo "Найдены настройки из резервной копии ($CONF_DIR/config.json), ставлю панель с ними."
+	check_ports
 	get_binary
+	install_caddy >/dev/null
 	install_unit
+	start_site
 	systemctl enable --now tigersb.service
 	"$BIN" info
 }
@@ -210,7 +263,14 @@ do_update() {
 	local was
 	was="$(systemctl is-active tigersb.service 2>/dev/null || true)"
 	get_binary
+	local caddy_changed
+	caddy_changed="$(install_caddy)"
 	install_unit
+	if [ "$(systemctl is-active tigersb-caddy.service 2>/dev/null || true)" != active ]; then
+		start_site
+	elif [ -n "$caddy_changed" ]; then
+		systemctl restart tigersb-caddy.service
+	fi
 	# A sleeping panel stays asleep after the update.
 	if [ "$was" = active ]; then
 		systemctl restart tigersb.service
@@ -232,9 +292,11 @@ main() {
 		fi
 		return
 	fi
+	check_ports
 	choose_role
 	choose_admin
 	get_binary
+	install_caddy >/dev/null
 	install -d -m 0700 "$CONF_DIR" "$DATA_DIR"
 
 	local args=(init --config "$CONF_DIR/config.json" --db "$DATA_DIR/panel.db" --role "$role" --admin "$admin" --password-stdin)
@@ -245,7 +307,10 @@ main() {
 	unset password
 
 	install_unit
+	start_site
 	systemctl enable --now tigersb.service
+	echo
+	"$BIN" site status --config "$CONF_DIR/config.json" || true
 	echo
 	echo "Готово. Состояние панели: $(systemctl is-active tigersb.service || true). Повторно показать адрес: tigersb info"
 	echo "Усыпить панель: tigersb sleep. Разбудить: tigersb wake"

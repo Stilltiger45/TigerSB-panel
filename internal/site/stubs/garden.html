@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Name}} — сайт обновляется</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#eef5e9;color:#2f4a2a;font:16px/1.65 Verdana,Geneva,sans-serif;padding:24px;box-sizing:border-box}
+main{max-width:500px;background:#fff;border-radius:18px;padding:28px 30px;box-shadow:0 8px 30px rgba(47,74,42,.12)}
+h1{font-size:1.6rem;margin:.3em 0;color:#3d6b33}
+p{margin:.5em 0}
+ul{margin:.8em 0;padding-left:1.2em;color:#5b7552}
+footer{margin-top:1.4em;font-size:.8rem;color:#8aa082}
+</style>
+</head>
+<body>
+<main>
+<svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true">
+<path d="M32 60V30" stroke="#5b8f4e" stroke-width="4" stroke-linecap="round"/>
+<path d="M32 36c-14 0-20-10-20-20 12 0 20 6 20 20zM32 30c0-12 8-20 22-20 0 12-8 20-22 20z" fill="#7fb36f"/>
+<path d="M14 60h36" stroke="#a5835a" stroke-width="4" stroke-linecap="round"/>
+</svg>
+<h1>{{.Name}}</h1>
+<p>Сейчас на сайте идут технические работы: пересаживаем записи на новые грядки.</p>
+<ul><li>календарь посадок</li><li>заметки о сортах</li><li>фотографии урожая</li></ul>
+<p>Вернёмся в ближайшее время.</p>
+<footer>© {{.Year}} {{.Name}}</footer>
+</main>
+</body>
+</html>

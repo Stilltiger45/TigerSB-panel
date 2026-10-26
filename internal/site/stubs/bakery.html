@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Name}} — скоро вернёмся</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbf4ea;color:#4a3426;font:17px/1.6 Georgia,"Times New Roman",serif;padding:24px;box-sizing:border-box}
+main{max-width:520px;text-align:center}
+h1{font-size:2rem;margin:.4em 0 .2em;color:#7a4a2a}
+p{margin:.6em 0}
+.note{display:inline-block;margin-top:1em;padding:.5em 1em;border:1px dashed #c89a6a;border-radius:10px;font-size:.95rem}
+footer{margin-top:2.5em;font-size:.85rem;color:#9c7d63}
+</style>
+</head>
+<body>
+<main>
+<svg width="120" height="96" viewBox="0 0 120 96" aria-hidden="true">
+<path d="M14 58c0-20 21-36 46-36s46 16 46 36H14z" fill="#e8b878"/>
+<path d="M14 58h92v14a8 8 0 0 1-8 8H22a8 8 0 0 1-8-8z" fill="#c8874a"/>
+<path d="M34 40c4-6 10-9 16-9M58 34c5-5 12-6 18-4" stroke="#fff3df" stroke-width="4" stroke-linecap="round" fill="none"/>
+<path d="M50 16c-4-6 4-8 0-14M64 16c-4-6 4-8 0-14" stroke="#d6c2ad" stroke-width="3" stroke-linecap="round" fill="none"/>
+</svg>
+<h1>{{.Name}}</h1>
+<p>Мы ставим новые рецепты в печь и немного обновляем сайт.</p>
+<p>Загляните чуть позже — всё будет готово, как только остынет.</p>
+<span class="note">Сайт на техническом обслуживании</span>
+<footer>© {{.Year}} {{.Name}}</footer>
+</main>
+</body>
+</html>

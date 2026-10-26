@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0.1" x2="0" y2="0.9">
+      <stop offset="0" stop-color="#FFB861"/>
+      <stop offset="1" stop-color="#FF6A00"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="2.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  
+  <g filter="url(#glow)">
+  <g fill="none" stroke="url(#g)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 35 C18 27 21 17 30 17 C35 17 38 20 40 23"/>
+    <path d="M76 35 C82 27 79 17 70 17 C65 17 62 20 60 23"/>
+    <path d="M40 23 C46 21 54 21 60 23
+             C70 26 77 33 80 42 L88 52 L81 55 L85 64 L75 66
+             C70 77 61 84 50 84
+             C39 84 30 77 25 66 L15 64 L19 55 L12 52 L20 42
+             C23 33 30 26 40 23"/>
+    <path d="M50 64 L50 70 M50 70 Q46 74 42 72 M50 70 Q54 74 58 72"/>
+  </g>
+  <g fill="url(#g)">
+    <!-- forehead stripes, tapered -->
+    <path d="M47.6 26 L52.4 26 L50 37 Z"/>
+    <path d="M40.5 28 L44.5 27 L45.5 37 Z"/>
+    <path d="M59.5 28 L55.5 27 L54.5 37 Z"/>
+    <!-- side stripes from the contour inward -->
+    <path d="M79 42 L80.5 46 L68 48 Z"/>
+    <path d="M21 42 L19.5 46 L32 48 Z"/>
+    <path d="M83 57 L83.8 61 L72 59 Z"/>
+    <path d="M17 57 L16.2 61 L28 59 Z"/>
+    <!-- eyes -->
+    <path d="M55 50 Q61 44 69 45 Q65 52 55 50 Z"/>
+    <path d="M45 50 Q39 44 31 45 Q35 52 45 50 Z"/>
+    <!-- nose -->
+    <path d="M44 59 Q50 57 56 59 Q53 63 50 65 Q47 63 44 59 Z"/>
+  </g>
+  </g>
+</svg>

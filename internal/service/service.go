@@ -38,11 +38,18 @@ func Wake(run Runner) error {
 	return nil
 }
 
+// CaddyUnit serves the maintenance page and, later, the VPN transports on 443.
+const CaddyUnit = "tigersb-caddy.service"
+
 // State is "active", "inactive", "failed" and so on, as systemd reports it.
-func State(run Runner) string {
+func State(run Runner) string { return UnitState(run, Unit) }
+
+// UnitState reports the state of any unit.
+func UnitState(run Runner, unit string) string {
 	// is-active exits non-zero for anything but active; the output is still the state.
-	out, _ := run("systemctl", "is-active", Unit)
-	if out == "" {
+	out, _ := run("systemctl", "is-active", unit)
+	// Without systemd the output is an error message, not a state.
+	if out == "" || strings.ContainsAny(out, " \n") {
 		return "unknown"
 	}
 	return out
