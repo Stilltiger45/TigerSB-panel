@@ -141,6 +141,7 @@ $("site-form").addEventListener("submit", async (e) => {
       name: form.sitename.value,
     });
     renderSite(data);
+    renderAccess(await api("api/me"));
     message(data.warning || "Сохранено. Caddy применил настройки.", false);
   } catch (err) {
     message(err.message, true);
@@ -157,6 +158,52 @@ $("recheck").addEventListener("click", async () => {
   }
 });
 
+function renderAccess(me) {
+  const pill = $("access");
+  const viaDomain = me.url && location.href.startsWith(me.url);
+  $("access-url").textContent = me.url;
+  $("access-url").hidden = !me.url;
+  $("close-panel").hidden = !me.open;
+  if (!me.url) {
+    pill.className = "pill off";
+    pill.textContent = "только через SSH-туннель";
+    $("access-text").textContent = "Без домена панель не публикуется, чтобы пароль не шёл по сети открытым текстом. Укажите домен на вкладке «Сайт и сертификат».";
+  } else if (me.open) {
+    pill.className = "pill warn";
+    pill.textContent = "открыта на домене";
+    $("access-text").textContent = "Когда закончите настройку, закройте панель: по этому адресу снова будет заглушка. Открыть её заново можно только на сервере командой tigersb open.";
+  } else {
+    pill.className = "pill ok";
+    pill.textContent = "спрятана за заглушкой";
+    $("access-text").textContent = viaDomain
+      ? "Панель закрыта и скоро перестанет открываться по этому адресу. Открыть снова: tigersb open на сервере."
+      : "По адресу панели сейчас открывается заглушка. Открыть панель на домене: tigersb open на сервере.";
+  }
+}
+
+function accessMessage(text, bad) {
+  const box = $("access-msg");
+  box.textContent = text;
+  box.className = bad ? "notice bad" : "notice";
+  box.hidden = !text;
+}
+
+$("close-panel").addEventListener("click", async () => {
+  const ok = confirm("Закрыть панель? По её адресу будет открываться заглушка, а открыть панель снова можно будет только по SSH командой tigersb open.");
+  if (!ok) return;
+  $("close-panel").disabled = true;
+  accessMessage("");
+  try {
+    await api("api/panel/close", {});
+    renderAccess(await api("api/me"));
+    accessMessage("Панель закрыта. Caddy применит это через пару секунд.", false);
+  } catch (err) {
+    accessMessage(err.message, true);
+  } finally {
+    $("close-panel").disabled = false;
+  }
+});
+
 $("logout").addEventListener("click", async () => {
   await api("api/logout", {}).catch(() => {});
   location.reload();
@@ -169,6 +216,7 @@ async function load() {
   $("role").textContent = ROLES[me.role] || me.role;
   $("version").textContent = me.version;
   $("about-version").textContent = me.version;
+  renderAccess(me);
   renderSite(await api("api/site"));
 }
 

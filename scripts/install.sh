@@ -239,6 +239,7 @@ install_caddy() {
 }
 
 # start_site writes the maintenance page and Caddyfile, then starts Caddy.
+# Start the panel first: the route to it is published only while it runs.
 start_site() {
 	install -d -m 0700 "$DATA_DIR/caddy"
 	install -d -m 0755 "$DATA_DIR/www"
@@ -253,8 +254,8 @@ restore() {
 	get_binary
 	install_caddy >/dev/null
 	install_unit
-	start_site
 	systemctl enable --now tigersb.service
+	start_site
 	"$BIN" info
 }
 
@@ -266,16 +267,17 @@ do_update() {
 	local caddy_changed
 	caddy_changed="$(install_caddy)"
 	install_unit
-	if [ "$(systemctl is-active tigersb-caddy.service 2>/dev/null || true)" != active ]; then
-		start_site
-	elif [ -n "$caddy_changed" ]; then
-		systemctl restart tigersb-caddy.service
-	fi
 	# A sleeping panel stays asleep after the update.
 	if [ "$was" = active ]; then
 		systemctl restart tigersb.service
 	fi
+	# Rewrite the Caddyfile with the new binary, so new routes take effect.
+	start_site
+	if [ -n "$caddy_changed" ]; then
+		systemctl restart tigersb-caddy.service
+	fi
 	echo "Панель обновлена до $("$BIN" version), состояние: $(systemctl is-active tigersb.service || true)."
+	"$BIN" info
 }
 
 main() {
@@ -307,12 +309,15 @@ main() {
 	unset password
 
 	install_unit
-	start_site
 	systemctl enable --now tigersb.service
+	start_site
 	echo
 	"$BIN" site status --config "$CONF_DIR/config.json" || true
 	echo
-	echo "Готово. Состояние панели: $(systemctl is-active tigersb.service || true). Повторно показать адрес: tigersb info"
+	"$BIN" info --config "$CONF_DIR/config.json"
+	echo
+	echo "Готово. Повторно показать адрес: tigersb info"
+	echo "Открыть панель на домене: tigersb open. Спрятать за заглушку: tigersb close"
 	echo "Усыпить панель: tigersb sleep. Разбудить: tigersb wake"
 	echo "Удалить полностью: curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/uninstall.sh | sudo bash"
 }

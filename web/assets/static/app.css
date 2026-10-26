@@ -166,6 +166,7 @@ ul.soon li::marker { color: var(--orange); }
   border-radius: 16px;
   background: var(--field);
 }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88rem; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 12px; background: var(--field); border: 1px solid var(--line); }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .notice { padding: 10px 14px; border-radius: 14px; background: rgba(255, 177, 92, 0.10); border: 1px solid rgba(255, 177, 92, 0.35); color: var(--orange-light); }
 .notice.bad { background: rgba(255, 107, 107, 0.08); border-color: rgba(255, 107, 107, 0.35); color: var(--error); }
