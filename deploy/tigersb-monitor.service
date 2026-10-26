@@ -23,4 +23,6 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 ReadWritePaths=/var/lib/tigersb
 ReadOnlyPaths=/etc/tigersb
+# Users and traffic go through `docker exec` into the Xray container.
+Environment=DOCKER_CONFIG=/var/lib/tigersb/docker
 UMask=0077

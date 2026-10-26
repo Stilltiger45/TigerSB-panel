@@ -21,6 +21,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
+	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
 
 const secret = "0123456789abcdef0123456789abcdef"
@@ -50,6 +51,13 @@ func newTestServer(t *testing.T) *Server {
 	s.Site = site.Paths{Dir: filepath.Join(dir, "caddy"), WWW: filepath.Join(dir, "www"), Socket: filepath.Join(dir, "none.sock")}
 	s.CertAddr = "127.0.0.1:1"
 	s.Run = func(string, ...string) (string, error) { return "inactive", errors.New("exit 3") }
+	s.Xray = &xray.Runtime{
+		Dir: filepath.Join(dir, "xray"), Routes: filepath.Join(dir, "edge", "routes.json"), Image: "xray:test",
+		Exec: func(context.Context, []byte, string, ...string) (string, error) {
+			return "", errors.New("no docker here")
+		},
+	}
+	s.LocalIPs = func() ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.9")}, nil }
 	return s
 }
 

@@ -25,6 +25,13 @@ const Repo = "Stilltiger45/TigerSB-panel"
 // Unit runs queued updates and rollbacks outside the panel's cgroup.
 const Unit = "tigersb-update.service"
 
+// Units of the edge router on 443 and the Xray container, restarted after a
+// rollback.
+const (
+	EdgeUnit = "tigersb-edge.service"
+	XrayUnit = "tigersb-xray.service"
+)
+
 // Phases of a job.
 const (
 	PhaseQueued      = "queued"
@@ -326,14 +333,40 @@ func (u *Updater) restore(ctx context.Context, id string, start bool, log io.Wri
 	if out, err := u.run("systemctl", "stop", service.Unit); err != nil {
 		fmt.Fprintf(log, "systemctl stop: %v %s\n", err, out)
 	}
+	before := map[string]bool{}
+	for _, f := range u.Layout.unitFiles() {
+		before[filepath.Base(f)] = true
+	}
 	if _, err := RestorePoint(u.Layout, id); err != nil {
 		return err
 	}
 	if out, err := u.run("systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %v %s", err, out)
 	}
+	after := map[string]bool{}
+	for _, f := range u.Layout.unitFiles() {
+		after[filepath.Base(f)] = true
+	}
+	// Units the point does not have must stop: an older version may want
+	// port 443 for Caddy back from the edge router.
+	for name := range before {
+		if !after[name] && name != Unit {
+			u.run("systemctl", "stop", name)
+		}
+	}
 	if out, err := u.run("systemctl", "restart", service.CaddyUnit); err != nil {
 		return fmt.Errorf("Caddy не перезапустился: %v %s", err, out)
+	}
+	// The edge router and Xray rebuild their files from the restored database.
+	for _, name := range []string{EdgeUnit, XrayUnit} {
+		if after[name] {
+			if out, err := u.run("systemctl", "enable", name); err != nil {
+				fmt.Fprintf(log, "systemctl enable %s: %v %s\n", name, err, out)
+			}
+			if out, err := u.run("systemctl", "restart", name); err != nil {
+				fmt.Fprintf(log, "%s не перезапустился: %v %s\n", name, err, out)
+			}
+		}
 	}
 	for _, timer := range u.Layout.unitFiles() {
 		if strings.HasSuffix(timer, ".timer") {

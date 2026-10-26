@@ -2,7 +2,7 @@
 // maintenance page, the certificate, the panel route, disk, memory, clock,
 // internet access, the database, monitoring, updates and restore points.
 //
-// Each later stage (Xray, sing-box, routing points) adds its own checks here;
+// Each later stage (sing-box, routing points) adds its own checks here;
 // until then they are listed as coming.
 package health
 
@@ -23,6 +23,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
+	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
 
 // States of a check, from best to worst; "soon" is a part not installed yet.
@@ -64,6 +65,7 @@ type Env struct {
 	Lookup    func(ctx context.Context, host string) ([]net.IP, error)
 	LocalIPs  func() ([]net.IP, error)
 	Internet  string // host:port that must be reachable, github.com:443
+	Listening func(port int) bool
 	Now       time.Time
 }
 
@@ -87,6 +89,9 @@ func (e *Env) defaults() {
 	}
 	if e.Internet == "" {
 		e.Internet = "github.com:443"
+	}
+	if e.Listening == nil {
+		e.Listening = listening
 	}
 	if e.Now.IsZero() {
 		e.Now = time.Now()
@@ -124,7 +129,8 @@ func Run(ctx context.Context, e Env) (*Report, error) {
 	add(checkDB(ctx, e))
 	add(checkUpdate(ctx, e))
 	add(checkPoints(e))
-	add(Result{ID: "xray", Title: "Xray (gRPC, XHTTP, каскад)", State: Soon, Detail: "Появится вместе с протоколами."})
+	add(checkEdge(e))
+	add(checkXray(ctx, e))
 	add(Result{ID: "singbox", Title: "sing-box (TUIC)", State: Soon, Detail: "Появится вместе с TUIC."})
 	add(Result{ID: "routers", Title: "Точки маршрутизации", State: Soon, Detail: "Появятся вместе с каскадом: панель будет проверять каждую по SSH."})
 
@@ -136,6 +142,69 @@ func Run(ctx context.Context, e Env) (*Report, error) {
 	}
 	b, _ := json.Marshal(r)
 	return r, e.Store.SetSettings(ctx, map[string]string{Key: string(b)})
+}
+
+func checkEdge(e Env) Result {
+	r := Result{ID: "edge", Title: "Порт 443 (сайт и XHTTP)"}
+	state := service.UnitState(e.Run, xray.EdgeUnit)
+	if state == "active" {
+		r.State, r.Detail = OK, "Работает: делит порт 443 по SNI между сайтом и VPN."
+	} else {
+		r.State, r.Detail = Fail, fmt.Sprintf("Служба в состоянии %s: сайт, сертификат и протоколы на 443 недоступны. Подробности: journalctl -u %s", state, xray.EdgeUnit)
+	}
+	return r
+}
+
+// listening reports whether something accepts connections on a loopback port.
+func listening(port int) bool {
+	c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)), 2*time.Second)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
+func checkXray(ctx context.Context, e Env) Result {
+	r := Result{ID: "xray", Title: "Xray (gRPC, XHTTP)"}
+	set, err := xray.Load(ctx, e.Store)
+	if err != nil {
+		r.State, r.Detail = Fail, err.Error()
+		return r
+	}
+	state := service.UnitState(e.Run, xray.Unit)
+	if state != "active" {
+		r.State, r.Detail = Fail, fmt.Sprintf("Контейнер не работает (%s): VPN недоступен. Подробности: journalctl -u %s", state, xray.Unit)
+		return r
+	}
+	var parts, down []string
+	for _, p := range []struct {
+		name        string
+		enabled     bool
+		port, inner int
+	}{{"gRPC", set.GRPC.Enabled, set.GRPC.Port, xray.GRPCInner}, {"XHTTP", set.XHTTP.Enabled, set.XHTTP.Port, xray.XHTTPInner}} {
+		if !p.enabled {
+			continue
+		}
+		port := p.port
+		if port == xray.EdgePort {
+			port = p.inner
+		}
+		if e.Listening != nil && !e.Listening(port) {
+			down = append(down, fmt.Sprintf("%s (порт %d)", p.name, port))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s :%d", p.name, p.port))
+	}
+	switch {
+	case len(down) > 0:
+		r.State, r.Detail = Fail, "Не слушает "+strings.Join(down, ", ")+". Подробности: journalctl -u "+xray.Unit
+	case len(parts) == 0:
+		r.State, r.Detail = Warn, "Работает, но все протоколы выключены."
+	default:
+		r.State, r.Detail = OK, "Работает: "+strings.Join(parts, ", ")+"."
+	}
+	return r
 }
 
 func rank(state string) int {

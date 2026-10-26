@@ -44,6 +44,11 @@ const (
 // AdminSocket is where the tigersb-caddy unit exposes the Caddy admin API.
 const AdminSocket = "/run/tigersb-caddy/admin.sock"
 
+// InnerTLSPort is where Caddy serves the domain on loopback. Port 443 belongs
+// to the edge router, which passes the domain's connections here and the VPN
+// protocols' connections to Xray.
+const InnerTLSPort = 8444
+
 // Settings describe the public site of this server.
 type Settings struct {
 	Domain   string `json:"domain"`
@@ -233,7 +238,9 @@ func (p Paths) Caddyfile() string { return filepath.Join(p.Dir, "Caddyfile") }
 //
 // With a domain Caddy gets a Let's Encrypt certificate through the TLS-ALPN
 // challenge on port 443 only, so port 80 stays closed (the approach of
-// web-panel-proxy, MIT). Without a domain the page is served over plain HTTP.
+// web-panel-proxy, MIT). Caddy itself listens on 127.0.0.1:InnerTLSPort and
+// the edge router hands it the domain's connections from 443, the challenge
+// included. Without a domain the page is served over plain HTTP.
 //
 // A non-nil route publishes the panel under its secret path, over HTTPS only;
 // every other path, and the secret path while the panel is closed, gets the
@@ -243,13 +250,17 @@ func RenderCaddyfile(s Settings, p Paths, r *Route) string {
 	b.WriteString("# Создано панелью TigerSB. Ручные правки будут перезаписаны.\n{\n")
 	fmt.Fprintf(&b, "\tadmin unix/%s\n", p.Socket)
 	fmt.Fprintf(&b, "\tstorage file_system %s\n", p.Dir)
-	b.WriteString("\tauto_https disable_redirects\n\tgrace_period 5s\n}\n\n")
+	b.WriteString("\tauto_https disable_redirects\n\tgrace_period 5s\n")
+	if s.Domain != "" {
+		fmt.Fprintf(&b, "\thttps_port %d\n\tdefault_bind 127.0.0.1\n", InnerTLSPort)
+	}
+	b.WriteString("}\n\n")
 	if s.Domain != "" {
 		fmt.Fprintf(&b, "%s {\n\ttls {\n\t\tissuer acme {\n", s.Domain)
 		if s.Email != "" {
 			fmt.Fprintf(&b, "\t\t\temail %s\n", s.Email)
 		}
-		b.WriteString("\t\t\tdisable_http_challenge\n\t\t}\n\t}\n")
+		fmt.Fprintf(&b, "\t\t\tdisable_http_challenge\n\t\t\talt_tlsalpn_port %d\n\t\t}\n\t}\n", InnerTLSPort)
 	} else {
 		b.WriteString(":80 {\n")
 	}

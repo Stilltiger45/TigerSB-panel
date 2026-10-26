@@ -23,13 +23,17 @@ type world struct {
 	units   map[string]string
 	routed  bool // Caddy proxies the secret path to the panel
 	ntp     string
+	ports   map[int]bool // loopback ports that accept connections
 	env     Env
 	cleanup func()
 }
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
-	w := &world{units: map[string]string{"tigersb.service": "active", "tigersb-caddy.service": "active"}, routed: true, ntp: "yes"}
+	w := &world{units: map[string]string{
+		"tigersb.service": "active", "tigersb-caddy.service": "active",
+		"tigersb-edge.service": "active", "tigersb-xray.service": "active",
+	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true}}
 	caddy := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if w.routed && strings.HasPrefix(r.URL.Path, "/"+secret+"/") {
 			rw.Header().Set("Content-Security-Policy", "default-src 'self'; form-action 'self'")
@@ -65,10 +69,11 @@ func newWorld(t *testing.T) *world {
 	w.env = Env{
 		Cfg: cfg, Store: st, Run: run, Roots: roots,
 		HTTPSAddr: caddy.Listener.Addr().String(), HTTPAddr: caddy.Listener.Addr().String(),
-		Lookup:   func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.5")}, nil },
-		LocalIPs: func() ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.5")}, nil },
-		Internet: internet.Addr().String(),
-		Updater:  &update.Updater{Layout: update.DefaultLayout(filepath.Join(dir, "config.json"), filepath.Join(dir, "panel.db")), Store: st, Version: "main-1111111", Run: run},
+		Lookup:    func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.5")}, nil },
+		LocalIPs:  func() ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.5")}, nil },
+		Internet:  internet.Addr().String(),
+		Listening: func(port int) bool { return w.ports[port] },
+		Updater:   &update.Updater{Layout: update.DefaultLayout(filepath.Join(dir, "config.json"), filepath.Join(dir, "panel.db")), Store: st, Version: "main-1111111", Run: run},
 	}
 	return w
 }
@@ -93,7 +98,7 @@ func TestHealthyServer(t *testing.T) {
 	for id, want := range map[string]string{
 		"panel": OK, "caddy": OK, "stub": OK, "dns": OK, "route": OK, "clock": OK,
 		"internet": OK, "db": OK, "update": OK, "monitor": Warn, "restore": Warn,
-		"disk": Off, "xray": Soon, "singbox": Soon, "routers": Soon,
+		"disk": Off, "edge": OK, "xray": OK, "singbox": Soon, "routers": Soon,
 	} {
 		if got[id] != want {
 			t.Errorf("%s: %s, want %s", id, got[id], want)
@@ -153,6 +158,28 @@ func TestCaddyDownAndOtherFailures(t *testing.T) {
 		if got[id] != want {
 			t.Errorf("%s: %s, want %s", id, got[id], want)
 		}
+	}
+}
+
+func TestXrayAndEdge(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	r, _ := Run(ctx, w.env)
+	for _, res := range r.Results {
+		if res.ID == "xray" && !strings.Contains(res.Detail, "gRPC :8443, XHTTP :443") {
+			t.Errorf("detail: %s", res.Detail)
+		}
+	}
+	w.ports[10442] = false
+	r, _ = Run(ctx, w.env)
+	if got := states(r)["xray"]; got != Fail {
+		t.Errorf("XHTTP not listening: %s", got)
+	}
+	w.units["tigersb-xray.service"] = "failed"
+	w.units["tigersb-edge.service"] = "inactive"
+	r, _ = Run(ctx, w.env)
+	if s := states(r); s["xray"] != Fail || s["edge"] != Fail {
+		t.Errorf("units down: %v", s)
 	}
 }
 

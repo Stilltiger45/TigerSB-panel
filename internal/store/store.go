@@ -49,6 +49,18 @@ var migrations = []string{
 		time INTEGER PRIMARY KEY,
 		data TEXT NOT NULL
 	)`,
+	`CREATE TABLE users (
+		id         INTEGER PRIMARY KEY,
+		name       TEXT NOT NULL UNIQUE,
+		uuid       TEXT NOT NULL UNIQUE,
+		devices    INTEGER NOT NULL,
+		enabled    INTEGER NOT NULL DEFAULT 1,
+		created_at INTEGER NOT NULL,
+		up         INTEGER NOT NULL DEFAULT 0,
+		down       INTEGER NOT NULL DEFAULT 0,
+		online     TEXT NOT NULL DEFAULT '[]',
+		seen_at    INTEGER NOT NULL DEFAULT 0
+	)`,
 }
 
 // Open opens (creating if needed) the database at path and applies migrations.
