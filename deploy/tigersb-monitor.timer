@@ -1,0 +1,11 @@
+[Unit]
+Description=TigerSB resources and health check every 5 minutes
+Documentation=https://github.com/Stilltiger45/TigerSB-panel
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

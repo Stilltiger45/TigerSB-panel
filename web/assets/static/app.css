@@ -184,5 +184,47 @@ footer.foot { text-align: center; color: var(--faint); font-size: 0.85rem; paddi
 @media (prefers-reduced-motion: no-preference) {
   button, .tabs a, .tpl span { transition: background 0.15s, box-shadow 0.15s, border-color 0.15s, color 0.15s; }
 }
+/* Control tab */
+.stack { display: grid; gap: 18px; }
+.head-row { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.head-row h2 { margin: 0; }
+.meters { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 14px 0; }
+.meter { display: grid; gap: 4px; padding: 14px 16px; border-radius: 16px; background: var(--field); border: 1px solid var(--line); }
+.meter b { font-size: 1.5rem; font-weight: 650; }
+.meter .faint { font-size: 0.82rem; }
+.bar { height: 6px; border-radius: 999px; background: rgba(247, 243, 238, 0.10); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--orange-light), var(--orange)); }
+.bar i.hot { background: var(--error); }
+.bar-none { visibility: hidden; }
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--field); border: 1px solid var(--line); }
+.seg button { background: none; box-shadow: none; color: var(--muted); padding: 6px 14px; font-weight: 500; }
+.seg button[aria-pressed="true"] { background: var(--orange); color: var(--ink); font-weight: 650; }
+.charts { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin: 12px 0 6px; }
+.chart { margin: 0; padding: 12px 14px 8px; border-radius: 16px; background: var(--field); border: 1px solid var(--line); }
+.chart figcaption { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; }
+.chart svg { display: block; width: 100%; height: 150px; }
+.chart .grid-line { stroke: rgba(247, 243, 238, 0.10); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart .line-a { fill: none; stroke: var(--orange); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.chart .line-b { fill: none; stroke: var(--white); stroke-opacity: 0.75; stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.chart .area-a { fill: rgba(255, 122, 26, 0.14); stroke: none; }
+.legend { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-left: 6px; }
+.k-a { background: var(--orange); }
+.k-b { background: rgba(247, 243, 238, 0.75); }
+.axis { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--faint); margin-top: 4px; }
+ul.checks { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 2px; }
+ul.checks li { display: grid; grid-template-columns: 1fr auto; gap: 2px 14px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+ul.checks li:last-child { border-bottom: 0; }
+ul.checks .detail { grid-column: 1 / -1; color: var(--muted); font-size: 0.88rem; overflow-wrap: anywhere; }
+ul.checks li.soon b { color: var(--muted); font-weight: 500; }
+ul.points { list-style: none; margin: 10px 0 14px; padding: 0; display: grid; gap: 8px; }
+ul.points li { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 14px; background: var(--field); border: 1px solid var(--line); }
+ul.points li span { display: grid; gap: 2px; }
+ul.points li small { color: var(--faint); }
+ul.points button { padding: 7px 14px; }
+pre.log { margin: 8px 0 0; padding: 10px 12px; max-height: 260px; overflow: auto; border-radius: 12px; background: rgba(0, 0, 0, 0.35); border: 1px solid var(--line); font: 0.78rem/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+details summary { cursor: pointer; margin-top: 10px; }
+.pill.soon { color: var(--faint); border-style: dashed; }
+
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 fieldset legend { padding: 0; margin-bottom: 6px; font-size: 0.9rem; }

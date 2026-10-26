@@ -14,6 +14,7 @@
   <nav class="tabs">
     <a href="#overview" data-tab="overview">Обзор</a>
     <a href="#site" data-tab="site">Сайт и сертификат</a>
+    <a href="#control" data-tab="control">Контроль</a>
     <a href="#about" data-tab="about">О панели</a>
   </nav>
   <span class="who" id="who"></span>
@@ -97,6 +98,80 @@
     </div>
   </section>
 
+  <section id="tab-control" class="stack" hidden>
+    <div class="glass">
+      <div class="head-row">
+        <h2>Ресурсы сервера</h2>
+        <span class="faint" id="m-age"></span>
+      </div>
+      <p id="m-empty" class="muted" hidden>Данных пока нет. Служба tigersb-monitor снимает их раз в 5 минут, первые появятся вскоре после установки.</p>
+      <div class="meters" id="meters">
+        <div class="meter"><span class="muted">Процессор</span><b id="m-cpu">—</b><div class="bar"><i id="m-cpu-bar"></i></div><span class="faint" id="m-cpu-sub"></span></div>
+        <div class="meter"><span class="muted">Память</span><b id="m-mem">—</b><div class="bar"><i id="m-mem-bar"></i></div><span class="faint" id="m-mem-sub"></span></div>
+        <div class="meter"><span class="muted">Диск</span><b id="m-disk">—</b><div class="bar"><i id="m-disk-bar"></i></div><span class="faint" id="m-disk-sub"></span></div>
+        <div class="meter"><span class="muted">Сеть</span><b id="m-net">—</b><div class="bar bar-none"></div><span class="faint" id="m-net-sub"></span></div>
+      </div>
+      <div class="row head-row">
+        <div class="seg" id="range">
+          <button type="button" data-hours="6">6 часов</button>
+          <button type="button" data-hours="24" aria-pressed="true">Сутки</button>
+          <button type="button" data-hours="168">Неделя</button>
+        </div>
+      </div>
+      <div class="charts">
+        <figure class="chart">
+          <figcaption><span>Процессор и память, %</span><span class="legend"><i class="k-a"></i>процессор <i class="k-b"></i>память</span></figcaption>
+          <svg id="chart-load" viewBox="0 0 600 160" preserveAspectRatio="none" role="img" aria-label="График загрузки процессора и памяти"></svg>
+          <div class="axis"><span id="ax-load-from"></span><span id="ax-load-to"></span></div>
+        </figure>
+        <figure class="chart">
+          <figcaption><span>Сеть, <span id="net-max">—</span> в пике</span><span class="legend"><i class="k-a"></i>входящий <i class="k-b"></i>исходящий</span></figcaption>
+          <svg id="chart-net" viewBox="0 0 600 160" preserveAspectRatio="none" role="img" aria-label="График сетевого трафика"></svg>
+          <div class="axis"><span id="ax-net-from"></span><span id="ax-net-to"></span></div>
+        </figure>
+      </div>
+      <p class="hint">Снимается раз в 5 минут и хранится 7 дней. Значения усреднены между замерами. Время, которое забирает гипервизор хостинга (steal), в процессор не входит и показано отдельно.</p>
+    </div>
+
+    <div class="glass">
+      <div class="head-row">
+        <h2>Проверка работоспособности</h2>
+        <button id="h-run" class="ghost" type="button">Проверить сейчас</button>
+      </div>
+      <p><span id="h-pill" class="pill off">нет данных</span> <span id="h-time" class="faint"></span></p>
+      <ul class="checks" id="checks"></ul>
+      <p class="hint">Сервер проверяет себя сам раз в 5 минут, даже когда панель спит.</p>
+    </div>
+
+    <div class="grid">
+      <div class="glass">
+        <h2>Обновление панели</h2>
+        <dl class="facts">
+          <dt>Установлена</dt><dd id="u-current">—</dd>
+          <dt>На GitHub</dt><dd id="u-latest">не проверялось</dd>
+        </dl>
+        <ul class="soon" id="u-changes" hidden></ul>
+        <div class="row">
+          <button id="u-check" class="ghost" type="button">Проверить обновления</button>
+          <button id="u-start" type="button" hidden>Обновить панель</button>
+        </div>
+        <p class="hint">Перед обновлением панель сама создаёт точку восстановления. Если новая версия не запустится, точка вернётся автоматически. Подписки и VPN во время обновления работают.</p>
+        <p id="u-msg" class="notice" hidden></p>
+        <details id="u-log-box" hidden><summary class="muted">Журнал</summary><pre id="u-log" class="log"></pre></details>
+      </div>
+      <div class="glass">
+        <h2>Точки восстановления</h2>
+        <p class="muted">Копия программы панели, настроек, базы, заглушки и сертификатов. Хранятся последние пять.</p>
+        <ul class="points" id="points"></ul>
+        <div class="row">
+          <button id="p-create" class="ghost" type="button">Создать точку</button>
+        </div>
+        <p id="p-msg" class="notice" hidden></p>
+        <p class="hint">С сервера: tigersb restore list и tigersb restore apply &lt;имя&gt;. Это работает, даже если панель не открывается.</p>
+      </div>
+    </div>
+  </section>
+
   <section id="tab-about" hidden>
     <div class="glass">
       <h2>О панели</h2>
@@ -110,7 +185,7 @@
         <tr><td>github.com/google/uuid, remyoudompheng/bigfft</td><td>BSD-3-Clause</td><td>зависимости SQLite</td></tr>
         <tr><td>github.com/dustin/go-humanize</td><td>MIT</td><td>зависимость SQLite</td></tr>
         <tr><td>Логотип и цвета TigerSB-client</td><td>GPL-3.0</td><td>тот же автор, общий стиль</td></tr>
-        <tr><td>web-panel-proxy</td><td>MIT</td><td>идея выпуска сертификата только через порт 443 (TLS-ALPN) и закреплённой версии Caddy</td></tr>
+        <tr><td>web-panel-proxy</td><td>MIT</td><td>идеи: сертификат только через порт 443 (TLS-ALPN), закреплённая версия Caddy, обновление из панели в отдельной службе с временным откатом, учёт steal отдельно от загрузки процессора</td></tr>
         <tr><td>OlConnect_manager</td><td>WTFPL</td><td>идея установки и удаления одной командой</td></tr>
       </table>
       <p class="faint">Полный список с текстами: <a href="https://github.com/Stilltiger45/TigerSB-panel/blob/main/THIRD_PARTY_NOTICES.md" rel="noreferrer" target="_blank">THIRD_PARTY_NOTICES.md</a>.</p>

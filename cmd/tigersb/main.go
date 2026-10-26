@@ -28,6 +28,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
+	"github.com/Stilltiger45/TigerSB-panel/internal/update"
 	"github.com/Stilltiger45/TigerSB-panel/internal/web"
 	"github.com/Stilltiger45/TigerSB-panel/web/assets"
 )
@@ -48,6 +49,9 @@ const usage = `TigerSB panel
   tigersb sleep    усыпить панель (VPN продолжает работать)
   tigersb wake     разбудить панель
   tigersb status   состояние панели
+  tigersb update   обновить панель с GitHub (перед этим создаётся точка восстановления)
+  tigersb restore  точки восстановления: restore list | restore create | restore apply <имя>
+  tigersb monitor  снять показатели и проверить сервер (вызывает таймер раз в 5 минут)
   tigersb version  версия
 `
 
@@ -79,6 +83,14 @@ func main() {
 		err = cmdOpen(os.Args[2:], false)
 	case "status":
 		fmt.Println("Панель:", service.State(service.ExecRunner))
+	case "monitor":
+		err = cmdMonitor(os.Args[2:])
+	case "update":
+		err = cmdUpdate(os.Args[2:])
+	case "restore":
+		err = cmdRestore(os.Args[2:])
+	case "job":
+		err = cmdJob(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -159,6 +171,12 @@ func cmdServe(args []string) error {
 	defer stop()
 
 	h := web.New(cfg, st, assets.FS, version)
+	h.Updater = &update.Updater{
+		Layout:  update.DefaultLayout(*cfgPath, cfg.DBPath),
+		Store:   st,
+		Version: version,
+		PanelUp: update.LoopbackCheck(cfg.Listen, cfg.SecretPath),
+	}
 	go h.PruneLoop(ctx)
 
 	srv := &http.Server{
@@ -218,11 +236,12 @@ func cmdPasswd(args []string) error {
 
 // env is what the site and access commands need.
 type env struct {
-	cfg   *config.Config
-	st    *store.Store
-	set   site.Settings
-	paths site.Paths
-	open  bool
+	cfgPath string
+	cfg     *config.Config
+	st      *store.Store
+	set     site.Settings
+	paths   site.Paths
+	open    bool
 }
 
 func openEnv(name string, args []string, extra ...func(*flag.FlagSet)) (*env, error) {
@@ -246,7 +265,7 @@ func openEnv(name string, args []string, extra ...func(*flag.FlagSet)) (*env, er
 		var open bool
 		open, err = site.PanelOpen(ctx, st)
 		if err == nil {
-			return &env{cfg: cfg, st: st, set: set, paths: site.DefaultPaths(filepath.Dir(cfg.DBPath)), open: open}, nil
+			return &env{cfgPath: *cfgPath, cfg: cfg, st: st, set: set, paths: site.DefaultPaths(filepath.Dir(cfg.DBPath)), open: open}, nil
 		}
 	}
 	st.Close()

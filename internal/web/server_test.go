@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,8 +16,11 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/auth"
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
+	"github.com/Stilltiger45/TigerSB-panel/internal/health"
+	"github.com/Stilltiger45/TigerSB-panel/internal/metrics"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
+	"github.com/Stilltiger45/TigerSB-panel/internal/update"
 )
 
 const secret = "0123456789abcdef0123456789abcdef"
@@ -295,5 +300,86 @@ func TestClosePanel(t *testing.T) {
 	}
 	if w := do(s, http.MethodGet, me, "", c); !strings.Contains(w.Body.String(), `"open":false`) || !strings.Contains(w.Body.String(), `"url":"https://`) {
 		t.Fatalf("me after close: %s", w.Body.String())
+	}
+}
+
+func TestControlTab(t *testing.T) {
+	s := newTestServer(t)
+	dir := t.TempDir()
+	s.Updater = &update.Updater{Layout: update.Layout{
+		Config: filepath.Join(dir, "config.json"), DB: filepath.Join(dir, "panel.db"),
+		Bin: filepath.Join(dir, "tigersb"), Units: dir,
+	}, Store: s.store, Version: "main-1111111"}
+	var started []string
+	s.Run = func(name string, args ...string) (string, error) {
+		started = append(started, name+" "+strings.Join(args, " "))
+		return "inactive", nil
+	}
+	s.Updater.Run = s.Run
+	s.HealthBase = health.Env{
+		Internet: "127.0.0.1:1",
+		Lookup:   func(context.Context, string) ([]net.IP, error) { return nil, errors.New("offline") },
+	}
+	const sha = "abcdef0123456789abcdef0123456789abcdef01"
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"sha":"`+sha+`","commit":{"message":"Вкладка Контроль","committer":{"date":"2026-10-26T12:00:00Z"}}}`)
+	}))
+	defer gh.Close()
+	old := update.APIBase
+	update.APIBase = gh.URL
+	defer func() { update.APIBase = old }()
+	s.GitHub = gh.Client()
+
+	api := "/" + secret + "/api/control"
+	if w := do(s, http.MethodGet, api, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous: %d", w.Code)
+	}
+	c := login(t, s, "admin", "very-secret-pass").Result().Cookies()[0]
+
+	// Before the timer ran: no data, but a valid answer.
+	w := do(s, http.MethodGet, api+"?hours=168", "", c)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"latest":null`) || !strings.Contains(w.Body.String(), `"points":[]`) {
+		t.Fatalf("empty control: %d %s", w.Code, w.Body.String())
+	}
+
+	if w := do(s, http.MethodPost, api+"/health", "{}", c); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"caddy","title"`) {
+		t.Fatalf("health: %d %s", w.Code, w.Body.String())
+	}
+
+	// Updating needs a fresh check first.
+	if w := do(s, http.MethodPost, api+"/update", "{}", c); w.Code != http.StatusBadRequest {
+		t.Fatalf("update without a check: %d", w.Code)
+	}
+	w = do(s, http.MethodPost, api+"/check", "{}", c)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"available":true`) || !strings.Contains(w.Body.String(), "Вкладка Контроль") {
+		t.Fatalf("check: %d %s", w.Code, w.Body.String())
+	}
+	w = do(s, http.MethodPost, api+"/update", "{}", c)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"phase":"queued"`) {
+		t.Fatalf("update: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(strings.Join(started, "\n"), "systemctl start --no-block tigersb-update.service") {
+		t.Fatalf("update unit not started: %v", started)
+	}
+	if w := do(s, http.MethodPost, api+"/restore", "{}", c); w.Code != http.StatusBadRequest {
+		t.Fatalf("restore point during an update: %d", w.Code)
+	}
+	if w := do(s, http.MethodGet, api+"/job", "", c); !strings.Contains(w.Body.String(), `"phase":"queued"`) {
+		t.Fatalf("job: %s", w.Body.String())
+	}
+}
+
+func TestChartAveragesLongRanges(t *testing.T) {
+	var samples []metrics.Sample
+	for i := 0; i < 2880; i++ {
+		cpu := float64(i % 2 * 100)
+		samples = append(samples, metrics.Sample{Time: int64(i), CPU: &cpu, MemUsed: 1, MemTotal: 2})
+	}
+	pts := chart(samples)
+	if len(pts) > maxPoints || len(pts) < maxPoints/2 {
+		t.Fatalf("%d points", len(pts))
+	}
+	if *pts[0].CPU != 50 || pts[0].Mem != 50 || pts[0].Rx != nil {
+		t.Fatalf("first point: %+v", pts[0])
 	}
 }
