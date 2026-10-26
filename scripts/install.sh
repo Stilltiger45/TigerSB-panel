@@ -5,6 +5,7 @@
 #   sudo ./scripts/install.sh                     # from a repo checkout, builds with Go
 #   sudo ./scripts/install.sh --binary ./tigersb  # use a ready binary
 #   sudo ./scripts/install.sh --update            # new binary, same config and database
+#   sudo ./scripts/install.sh --update --ref SHA  # build that commit (the panel's update button)
 #
 # Without a checkout or --binary the latest GitHub release is downloaded; if
 # there is no release yet, the main branch is downloaded and built with Go.
@@ -34,6 +35,7 @@ email=""
 main_server=""
 admin=""
 update=0
+ref=""
 
 die() { echo "Ошибка: $*" >&2; exit 1; }
 
@@ -48,6 +50,7 @@ usage() {
   --main-server ADDR   адрес основного сервера (для точки маршрутизации)
   --admin LOGIN        логин администратора
   --update             обновить панель, сохранив настройки и базу
+  --ref SHA            собрать этот коммит ветки main (так обновляет кнопка в панели)
 
 Удаление: curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/uninstall.sh | sudo bash
 
@@ -64,6 +67,7 @@ while [ $# -gt 0 ]; do
 		--main-server) main_server="${2:?}"; shift 2 ;;
 		--admin) admin="${2:?}"; shift 2 ;;
 		--update) update=1; shift ;;
+		--ref) ref="${2:?}"; [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "--ref ждёт полный хеш коммита"; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		*) usage >&2; die "неизвестный параметр $1" ;;
 	esac
@@ -181,31 +185,60 @@ get_binary() {
 	fi
 	local src
 	src="$(repo_dir)"
-	if [ -n "$src" ]; then
+	if [ -n "$src" ] && [ -z "$ref" ]; then
 		build_from "$src" "$(git -C "$src" describe --tags --always --dirty 2>/dev/null || echo dev)"
-	elif curl -fsSL -o "$tmp/tigersb" "https://github.com/$REPO/releases/latest/download/tigersb-linux-$arch" 2>/dev/null; then
+	elif [ -z "$ref" ] && curl -fsSL -o "$tmp/tigersb" "https://github.com/$REPO/releases/latest/download/tigersb-linux-$arch" 2>/dev/null; then
 		echo "Скачан последний релиз $REPO."
 	else
-		echo "Релизов пока нет, скачиваю исходники из ветки main..."
+		# The panel names such builds main-<short sha> and compares that with
+		# GitHub to tell whether an update is available.
+		[ -n "$ref" ] || ref="$(main_sha)"
 		mkdir -p "$tmp/src"
-		curl -fsSL "https://github.com/$REPO/archive/refs/heads/main.tar.gz" | tar -xz -C "$tmp/src" --strip-components=1
-		build_from "$tmp/src" main
+		if [ -n "$ref" ]; then
+			echo "Скачиваю исходники коммита ${ref:0:7} из ветки main..."
+			curl -fsSL "https://github.com/$REPO/archive/$ref.tar.gz" | tar -xz -C "$tmp/src" --strip-components=1
+			build_from "$tmp/src" "main-${ref:0:7}"
+		else
+			echo "Релизов пока нет, скачиваю исходники из ветки main..."
+			curl -fsSL "https://github.com/$REPO/archive/refs/heads/main.tar.gz" | tar -xz -C "$tmp/src" --strip-components=1
+			build_from "$tmp/src" main
+		fi
 	fi
 	install -m 0755 "$tmp/tigersb" "$BIN"
 }
 
+# main_sha prints the newest commit of main, or nothing when GitHub's API is unreachable.
+main_sha() {
+	local sha
+	sha="$(curl -fsSL -H 'Accept: application/vnd.github.sha' "https://api.github.com/repos/$REPO/commits/main" 2>/dev/null || true)"
+	if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+		echo "$sha"
+	fi
+}
+
+UNITS="tigersb.service tigersb-caddy.service tigersb-monitor.service tigersb-monitor.timer tigersb-update.service"
+
 install_unit() {
 	local src name
+	# Units come from the same source tree the binary was built from.
 	src="$(repo_dir)"
-	for name in tigersb.service tigersb-caddy.service; do
+	if [ -d "${tmp:-}/src/deploy" ]; then
+		src="$tmp/src"
+	fi
+	for name in $UNITS; do
 		if [ -n "$src" ] && [ -f "$src/deploy/$name" ]; then
 			install -m 0644 "$src/deploy/$name" "/etc/systemd/system/$name"
 		else
-			curl -fsSL -o "/etc/systemd/system/$name" "https://raw.githubusercontent.com/$REPO/main/deploy/$name"
+			curl -fsSL -o "/etc/systemd/system/$name" "https://raw.githubusercontent.com/$REPO/${ref:-main}/deploy/$name"
 			chmod 0644 "/etc/systemd/system/$name"
 		fi
 	done
 	systemctl daemon-reload
+}
+
+# start_monitor turns on the 5-minute resource and health check.
+start_monitor() {
+	systemctl enable --now tigersb-monitor.timer
 }
 
 # check_ports stops a fresh install when another web server holds 80 or 443.
@@ -256,6 +289,7 @@ restore() {
 	install_unit
 	systemctl enable --now tigersb.service
 	start_site
+	start_monitor
 	"$BIN" info
 }
 
@@ -276,6 +310,7 @@ do_update() {
 	if [ -n "$caddy_changed" ]; then
 		systemctl restart tigersb-caddy.service
 	fi
+	start_monitor
 	echo "Панель обновлена до $("$BIN" version), состояние: $(systemctl is-active tigersb.service || true)."
 	"$BIN" info
 }
@@ -311,6 +346,7 @@ main() {
 	install_unit
 	systemctl enable --now tigersb.service
 	start_site
+	start_monitor
 	echo
 	"$BIN" site status --config "$CONF_DIR/config.json" || true
 	echo

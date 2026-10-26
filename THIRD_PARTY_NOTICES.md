@@ -28,7 +28,7 @@ TigerSB-panel распространяется под [GPL-3.0](LICENSE). Ниж
 
 | Источник | Лицензия | Что взято |
 |---|---|---|
-| [web-panel-proxy](https://github.com/POLESNIESOVETI12/web-panel-proxy) | MIT | Подход к сертификату: только TLS-ALPN на порту 443 (`disable_http_challenge`, `auto_https disable_redirects`), порт 80 закрыт; установка закреплённой версии Caddy с проверкой SHA-512. Код не копировался, конфиг написан заново. |
+| [web-panel-proxy](https://github.com/POLESNIESOVETI12/web-panel-proxy) | MIT | Подход к сертификату: только TLS-ALPN на порту 443 (`disable_http_challenge`, `auto_https disable_redirects`), порт 80 закрыт; установка закреплённой версии Caddy с проверкой SHA-512. Схема обновления из панели: отдельная служба вне cgroup панели, временная точка отката, статус и журнал в файлах, понятная причина сбоя. Учёт steal отдельно от загрузки процессора. Код не копировался, всё написано заново на Go. |
 | [OlConnect_manager](https://github.com/Oleglog/OlConnect_manager) | WTFPL | Схема установки и полного удаления одной командой `curl … \| sudo bash`. Код не копировался. |
 | [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client) | GPL-3.0 | Логотип `web/assets/static/tiger.svg` и палитра. Тот же автор. |
 

@@ -21,9 +21,11 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/auth"
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
+	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
+	"github.com/Stilltiger45/TigerSB-panel/internal/update"
 )
 
 const (
@@ -50,6 +52,13 @@ type Server struct {
 	// Run executes systemctl; tests replace it.
 	Run service.Runner
 
+	// Updater runs updates and keeps restore points; nil turns them off.
+	Updater *update.Updater
+	// GitHub is the client for update checks.
+	GitHub *http.Client
+	// HealthBase holds probe targets for the checks; tests replace them.
+	HealthBase health.Env
+
 	// loaded receives the result of each background Caddy load in tests.
 	loaded chan error
 
@@ -72,6 +81,7 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, version string) *Ser
 		Site:     site.DefaultPaths(filepath.Dir(cfg.DBPath)),
 		CertAddr: site.LocalTLS,
 		Run:      service.ExecRunner,
+		GitHub:   &http.Client{Timeout: 20 * time.Second},
 	}
 }
 
@@ -101,6 +111,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSite(w, r)
 	case rest == "/api/panel/close":
 		s.handleClose(w, r)
+	case rest == "/api/control":
+		s.handleControl(w, r)
+	case rest == "/api/control/health":
+		s.handleHealth(w, r)
+	case rest == "/api/control/job":
+		s.handleJob(w, r)
+	case rest == "/api/control/check":
+		s.handleCheck(w, r)
+	case rest == "/api/control/update":
+		s.handleUpdate(w, r)
+	case rest == "/api/control/restore":
+		s.handleRestore(w, r)
 	case rest == "/stub/preview":
 		s.handleStubPreview(w, r)
 	case strings.HasPrefix(rest, "/static/"):

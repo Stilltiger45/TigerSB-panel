@@ -1,0 +1,26 @@
+[Unit]
+Description=TigerSB resources and health check
+Documentation=https://github.com/Stilltiger45/TigerSB-panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tigersb monitor --config /etc/tigersb/config.json
+Nice=10
+TimeoutStartSec=2min
+
+# Reads /proc and asks systemd; writes only to the database.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/var/lib/tigersb
+ReadOnlyPaths=/etc/tigersb
+UMask=0077

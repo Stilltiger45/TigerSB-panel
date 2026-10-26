@@ -29,11 +29,12 @@ ask() {
 
 [ "$(id -u)" -eq 0 ] || die "запустите от root (sudo)"
 
-# Every service the panel creates is named tigersb*.service, so later stages
-# (Xray, sing-box, Caddy configs) are removed by the same pattern.
+# Every unit the panel creates is named tigersb*.service or tigersb*.timer, so
+# later stages (Xray, sing-box) are removed by the same pattern. Timers go
+# first, so they cannot start a service that is being removed.
 shopt -s nullglob
 units=()
-for f in "$UNIT_DIR"/tigersb.service "$UNIT_DIR"/tigersb-*.service "$UNIT_DIR"/tigersb@.service; do
+for f in "$UNIT_DIR"/tigersb-*.timer "$UNIT_DIR"/tigersb.service "$UNIT_DIR"/tigersb-*.service "$UNIT_DIR"/tigersb@.service; do
 	[ -e "$f" ] || continue
 	units+=("$(basename "$f")")
 done
@@ -46,12 +47,12 @@ fi
 
 echo "Будет удалено:"
 for u in "${units[@]}"; do
-	echo "  - служба $u"
+	echo "  - $u"
 done
 [ ! -e "$BIN" ] || echo "  - $BIN"
 [ ! -d "$LIB_DIR" ] || echo "  - $LIB_DIR (Caddy)"
 [ ! -d "$CONF_DIR" ] || echo "  - $CONF_DIR (настройки и секретный путь)"
-[ ! -d "$DATA_DIR" ] || echo "  - $DATA_DIR (база, сертификаты, заглушка)"
+[ ! -d "$DATA_DIR" ] || echo "  - $DATA_DIR (база, сертификаты, заглушка, точки восстановления)"
 echo
 
 backup=0
@@ -74,8 +75,9 @@ if [ "$backup" -eq 1 ]; then
 		[ ! -d "$d" ] || dirs+=("${d#/}")
 	done
 	# Stop first so the SQLite database is not copied mid-write.
-	systemctl stop tigersb.service tigersb-caddy.service 2>/dev/null || true
-	(umask 077 && tar -czf "$archive" -C / "${dirs[@]}")
+	systemctl stop tigersb-monitor.timer tigersb.service tigersb-caddy.service 2>/dev/null || true
+	# Restore points are only useful on this server; they would bloat the copy.
+	(umask 077 && tar -czf "$archive" --exclude="${DATA_DIR#/}/restore" -C / "${dirs[@]}")
 	echo "Копия сохранена: $archive"
 	echo "Перенос: скопируйте архив на новый сервер, выполните там tar -xzf <архив> -C / и запустите установщик."
 fi

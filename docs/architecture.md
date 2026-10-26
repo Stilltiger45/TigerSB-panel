@@ -20,6 +20,12 @@
 - SQLite: администраторы и сессии (`internal/store`).
 - Режим сна: `tigersb sleep` останавливает процесс панели, VPN и подписки продолжают работать.
 - Установщик `scripts/install.sh` (установка, `--update`) и `scripts/uninstall.sh`.
+- Контроль (`internal/metrics`, `internal/health`, `internal/update`):
+  - `tigersb-monitor.timer` раз в 5 минут запускает `tigersb monitor`. Он записывает замер из `/proc` в таблицу `metrics` (7 дней), проверяет сервер и кладёт отчёт в `settings` (`health.last`), а раз в 6 часов спрашивает GitHub о новой версии (`update.check`).
+  - Обновление и откат панель не делает сама. Она записывает задачу в `/var/lib/tigersb/update/status.json` и запускает `tigersb-update.service` (`tigersb job`), который работает в своём cgroup и переживает перезапуск панели.
+  - Статус и журнал лежат в файлах, а не в базе, потому что откат заменяет базу.
+  - Точки восстановления: `tar.gz` в `/var/lib/tigersb/restore` с манифестом. База копируется через `VACUUM INTO`, поэтому панель не останавливается. При возврате распаковываются только известные пути, а набор служб `tigersb*` становится ровно таким, как в точке.
+  - Сборки из `main` называются `main-<короткий хеш>`. По хешу панель понимает, есть ли обновление, а установщик с `--ref` собирает ровно проверенный коммит.
 - Caddy 2.11.4 (служба `tigersb-caddy`, бинарник в `/usr/local/lib/tigersb`) на портах 443 или 80 без домена. Панель пишет `/var/lib/tigersb/caddy/Caddyfile` и `/var/lib/tigersb/www/index.html` и применяет их через admin-сокет `/run/tigersb-caddy/admin.sock` (`internal/site`). Сертификат Let's Encrypt через TLS-ALPN, порт 80 закрыт. Настройки сайта хранятся в таблице `settings`.
 
 ## План

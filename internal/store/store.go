@@ -45,6 +45,10 @@ var migrations = []string{
 		key   TEXT PRIMARY KEY,
 		value TEXT NOT NULL
 	)`,
+	`CREATE TABLE metrics (
+		time INTEGER PRIMARY KEY,
+		data TEXT NOT NULL
+	)`,
 }
 
 // Open opens (creating if needed) the database at path and applies migrations.
@@ -199,4 +203,59 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string) error
 		}
 	}
 	return tx.Commit()
+}
+
+// AddMetric stores one resource sample, encoded by the caller.
+func (s *Store) AddMetric(ctx context.Context, at time.Time, data []byte) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO metrics (time, data) VALUES (?, ?)
+		ON CONFLICT(time) DO UPDATE SET data = excluded.data`, at.Unix(), string(data))
+	return err
+}
+
+// Metrics returns samples taken at or after since, oldest first.
+func (s *Store) Metrics(ctx context.Context, since time.Time) ([][]byte, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT data FROM metrics WHERE time >= ? ORDER BY time`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]byte
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, []byte(d))
+	}
+	return out, rows.Err()
+}
+
+// LastMetric returns the newest sample, or nil when there is none.
+func (s *Store) LastMetric(ctx context.Context) ([]byte, error) {
+	var d string
+	err := s.db.QueryRowContext(ctx, `SELECT data FROM metrics ORDER BY time DESC LIMIT 1`).Scan(&d)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return []byte(d), err
+}
+
+// PruneMetrics deletes samples older than before.
+func (s *Store) PruneMetrics(ctx context.Context, before time.Time) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM metrics WHERE time < ?`, before.Unix())
+	return err
+}
+
+// Snapshot writes a consistent copy of the database to path, which must not exist.
+func (s *Store) Snapshot(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, path)
+	return err
+}
+
+// QuickCheck runs SQLite's integrity check and returns "ok" when the file is sound.
+func (s *Store) QuickCheck(ctx context.Context) (string, error) {
+	var res string
+	err := s.db.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&res)
+	return res, err
 }

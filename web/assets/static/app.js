@@ -9,6 +9,7 @@ const CERT = {
 };
 const CADDY = { active: "работает", activating: "запускается", inactive: "остановлен", failed: "ошибка запуска", unknown: "неизвестно" };
 const $ = (id) => document.getElementById(id);
+const TABS = ["overview", "site", "control", "about"];
 
 async function api(path, body) {
   const opts = { credentials: "same-origin" };
@@ -29,12 +30,13 @@ async function api(path, body) {
 
 function showTab() {
   const name = (location.hash || "#overview").slice(1);
-  const known = ["overview", "site", "about"].includes(name) ? name : "overview";
+  const known = TABS.includes(name) ? name : "overview";
   for (const a of document.querySelectorAll(".tabs a")) {
     if (a.dataset.tab === known) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
-  for (const id of ["overview", "site", "about"]) $("tab-" + id).hidden = id !== known;
+  for (const id of TABS) $("tab-" + id).hidden = id !== known;
+  if (known === "control") loadControl();
 }
 
 function setPill(el, cert) {
@@ -209,6 +211,322 @@ $("logout").addEventListener("click", async () => {
   location.reload();
 });
 
+// ---- Control tab ----
+const HEALTH = { ok: ["ok", "в порядке"], warn: ["warn", "внимание"], fail: ["bad", "ошибка"], off: ["off", "не проверялось"], soon: ["soon", "скоро"] };
+const SVG = "http://www.w3.org/2000/svg";
+let hours = 24;
+let controlTimer = null;
+let jobTimer = null;
+let controlVersion = "";
+
+function bytes(n) {
+  if (n == null) return "—";
+  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return (i === 0 ? n.toFixed(0) : n.toFixed(1)) + " " + units[i];
+}
+const rate = (n) => (n == null ? "—" : bytes(n) + "/с");
+const pct = (used, total) => (total ? (100 * used) / total : 0);
+const when = (t) => new Date(t).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+function uptime(sec) {
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  return d > 0 ? `${d} дн. ${h} ч` : `${h} ч ${Math.floor((sec % 3600) / 60)} мин`;
+}
+
+function setBar(id, value) {
+  const bar = $(id);
+  bar.style.width = Math.max(0, Math.min(100, value)) + "%";
+  bar.classList.toggle("hot", value >= 90);
+}
+
+function renderMeters(m) {
+  $("m-empty").hidden = !!m;
+  $("meters").hidden = !m;
+  if (!m) {
+    $("m-age").textContent = "";
+    return;
+  }
+  const ago = Math.max(0, Math.round((Date.now() / 1000 - m.time) / 60));
+  $("m-age").textContent = `замер ${ago === 0 ? "только что" : ago + " мин назад"} · сервер работает ${uptime(m.uptime)}`;
+  $("m-cpu").textContent = m.cpu == null ? "—" : Math.round(m.cpu) + "%";
+  setBar("m-cpu-bar", m.cpu || 0);
+  const load = (m.load || []).map((x) => x.toFixed(2)).join(" ");
+  $("m-cpu-sub").textContent = `${m.cores} ядр. · нагрузка ${load}` + (m.steal >= 1 ? ` · steal ${Math.round(m.steal)}%` : "");
+  const mem = pct(m.mem_used, m.mem_total);
+  $("m-mem").textContent = Math.round(mem) + "%";
+  setBar("m-mem-bar", mem);
+  $("m-mem-sub").textContent = `${bytes(m.mem_used)} из ${bytes(m.mem_total)}` + (m.swap_total ? ` · подкачка ${bytes(m.swap_used)}` : "");
+  const disk = pct(m.disk_used, m.disk_total);
+  $("m-disk").textContent = Math.round(disk) + "%";
+  setBar("m-disk-bar", disk);
+  $("m-disk-sub").textContent = `свободно ${bytes(m.disk_total - m.disk_used)} из ${bytes(m.disk_total)}`;
+  $("m-net").textContent = m.rx_rate == null ? "—" : "↓ " + rate(m.rx_rate);
+  $("m-net-sub").textContent = m.tx_rate == null ? "скорость появится со вторым замером" : "↑ " + rate(m.tx_rate) + " исходящий";
+}
+
+function svgEl(name, attrs) {
+  const el = document.createElementNS(SVG, name);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+// drawChart draws up to two series; gaps (null) break the line.
+function drawChart(svg, points, keyA, keyB, top) {
+  svg.replaceChildren();
+  for (const y of [0, 0.5, 1]) svg.append(svgEl("line", { x1: 0, x2: 600, y1: 4 + y * 152, y2: 4 + y * 152, class: "grid-line" }));
+  if (points.length < 2) return;
+  const t0 = points[0].t;
+  const span = Math.max(1, points[points.length - 1].t - t0);
+  const x = (p) => ((p.t - t0) / span) * 600;
+  const y = (v) => 156 - (Math.min(v, top) / top) * 152;
+  for (const [key, cls] of [[keyB, "line-b"], [keyA, "line-a"]]) {
+    let run = [];
+    const flush = () => {
+      if (run.length > 1) {
+        const d = run.map((p, i) => (i ? "L" : "M") + x(p).toFixed(1) + " " + y(p[key]).toFixed(1)).join(" ");
+        if (cls === "line-a") svg.append(svgEl("path", { d: `${d} L${x(run[run.length - 1]).toFixed(1)} 156 L${x(run[0]).toFixed(1)} 156 Z`, class: "area-a" }));
+        svg.append(svgEl("path", { d, class: cls }));
+      }
+      run = [];
+    };
+    for (const p of points) {
+      if (p[key] == null) flush();
+      else run.push(p);
+    }
+    flush();
+  }
+}
+
+function renderCharts(history) {
+  drawChart($("chart-load"), history, "cpu", "mem", 100);
+  let peak = 0;
+  for (const p of history) peak = Math.max(peak, p.rx || 0, p.tx || 0);
+  drawChart($("chart-net"), history, "rx", "tx", peak * 1.1 || 1);
+  $("net-max").textContent = rate(peak);
+  const from = history.length ? when(history[0].t * 1000) : "";
+  const to = history.length ? when(history[history.length - 1].t * 1000) : "";
+  for (const n of ["load", "net"]) {
+    $(`ax-${n}-from`).textContent = from;
+    $(`ax-${n}-to`).textContent = to;
+  }
+}
+
+function renderHealth(r) {
+  const list = $("checks");
+  list.replaceChildren();
+  if (!r) {
+    $("h-pill").className = "pill off";
+    $("h-pill").textContent = "нет данных";
+    $("h-time").textContent = "Нажмите «Проверить сейчас».";
+    return;
+  }
+  const bad = r.results.filter((x) => x.state === "fail").length;
+  const warn = r.results.filter((x) => x.state === "warn").length;
+  const pill = $("h-pill");
+  if (bad) [pill.className, pill.textContent] = ["pill bad", `ошибок: ${bad}`];
+  else if (warn) [pill.className, pill.textContent] = ["pill warn", `предупреждений: ${warn}`];
+  else [pill.className, pill.textContent] = ["pill ok", "всё работает"];
+  $("h-time").textContent = "проверено " + when(r.checked);
+  // Problems first; the order within each state stays as the server sent it.
+  const order = { fail: 0, warn: 1, ok: 2, off: 3, soon: 4 };
+  const sorted = [...r.results].sort((a, b) => (order[a.state] ?? 3) - (order[b.state] ?? 3));
+  for (const res of sorted) {
+    const li = document.createElement("li");
+    li.className = res.state === "soon" ? "soon" : "";
+    const title = document.createElement("b");
+    title.textContent = res.title;
+    const [cls, text] = HEALTH[res.state] || ["off", res.state];
+    const p = document.createElement("span");
+    p.className = "pill " + cls;
+    p.textContent = text;
+    const detail = document.createElement("span");
+    detail.className = "detail";
+    detail.textContent = res.detail;
+    li.append(title, p, detail);
+    list.append(li);
+  }
+}
+
+function uMessage(text, bad) {
+  const box = $("u-msg");
+  box.textContent = text;
+  box.className = bad ? "notice bad" : "notice";
+  box.hidden = !text;
+}
+
+function renderUpdate(u) {
+  const st = u.status || {};
+  const c = u.check;
+  const busy = st.phase === "queued" || st.phase === "running";
+  $("u-current").textContent = controlVersion || "—";
+  if (c && c.error) $("u-latest").textContent = "не удалось проверить: " + c.error;
+  else if (c && c.latest) $("u-latest").textContent = c.available ? `${c.latest} от ${when(c.date)}` : `${c.latest}, у вас последняя`;
+  else $("u-latest").textContent = "не проверялось";
+  const changes = $("u-changes");
+  changes.replaceChildren();
+  for (const ch of (c && c.available && c.changes) || []) {
+    const li = document.createElement("li");
+    li.textContent = ch;
+    changes.append(li);
+  }
+  changes.hidden = !changes.children.length;
+  $("u-start").hidden = !(c && c.available) || busy;
+  $("u-check").disabled = busy;
+  $("p-create").disabled = busy;
+  for (const b of document.querySelectorAll("#points button")) b.disabled = busy;
+  if (busy) uMessage(st.message || "Идёт обновление…", false);
+  else if (st.phase === "done") uMessage(st.message, false);
+  else if (st.phase === "failed" || st.phase === "interrupted") uMessage(st.message, true);
+  else uMessage("", false);
+  $("u-log").textContent = u.log || "";
+  $("u-log-box").hidden = !u.log;
+  if (busy) watchJob();
+}
+
+function renderPoints(points) {
+  const list = $("points");
+  list.replaceChildren();
+  if (!points.length) {
+    const li = document.createElement("li");
+    li.textContent = "Пока ни одной.";
+    li.className = "muted";
+    list.append(li);
+    return;
+  }
+  for (const p of points) {
+    const li = document.createElement("li");
+    const info = document.createElement("span");
+    const name = document.createElement("b");
+    name.textContent = when(p.created);
+    const sub = document.createElement("small");
+    sub.textContent = `${p.version} · ${p.reason} · ${bytes(p.size)}`;
+    info.append(name, sub);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ghost";
+    btn.textContent = "Вернуть";
+    btn.addEventListener("click", () => rollback(p));
+    li.append(info, btn);
+    list.append(li);
+  }
+}
+
+async function loadControl() {
+  clearTimeout(controlTimer);
+  try {
+    const d = await api("api/control?hours=" + hours);
+    renderMeters(d.latest);
+    renderCharts(d.history);
+    renderHealth(d.health);
+    renderPoints(d.points);
+    renderUpdate(d.update);
+  } catch (err) {
+    uMessage(err.message, true);
+  }
+  if (!$("tab-control").hidden) controlTimer = setTimeout(loadControl, 60000);
+}
+
+// watchJob polls the update. The panel restarts during it, so failed
+// requests are expected for a while.
+function watchJob() {
+  if (jobTimer) return;
+  const tick = async () => {
+    let u;
+    try {
+      u = await api("api/control/job");
+    } catch {
+      uMessage("Панель перезапускается, жду…", false);
+      jobTimer = setTimeout(tick, 3000);
+      return;
+    }
+    jobTimer = null;
+    const st = u.status || {};
+    if (st.phase === "queued" || st.phase === "running") {
+      renderUpdate(u); // schedules the next poll
+      return;
+    }
+    if (st.phase === "done") {
+      uMessage(st.message + " Обновляю страницу…", false);
+      setTimeout(() => location.reload(), 2500);
+      return;
+    }
+    loadControl();
+  };
+  jobTimer = setTimeout(tick, 3000);
+}
+
+async function rollback(p) {
+  const ok = confirm(`Вернуть точку от ${when(p.created)} (версия ${p.version})?\n\nПрограмма панели, настройки, база и сертификаты станут такими, какими были тогда. Всё, что изменилось после, пропадёт. Панель перезапустится.`);
+  if (!ok) return;
+  try {
+    renderUpdate(await api("api/control/restore", { id: p.id }));
+  } catch (err) {
+    uMessage(err.message, true);
+  }
+}
+
+$("range").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  hours = Number(b.dataset.hours);
+  for (const x of $("range").querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
+  loadControl();
+});
+
+$("h-run").addEventListener("click", async () => {
+  $("h-run").disabled = true;
+  try {
+    renderHealth(await api("api/control/health", {}));
+  } catch (err) {
+    uMessage(err.message, true);
+  } finally {
+    $("h-run").disabled = false;
+  }
+});
+
+$("u-check").addEventListener("click", async () => {
+  $("u-check").disabled = true;
+  try {
+    renderUpdate(await api("api/control/check", {}));
+  } catch (err) {
+    uMessage(err.message, true);
+  } finally {
+    $("u-check").disabled = false;
+  }
+});
+
+$("u-start").addEventListener("click", async () => {
+  if (!confirm("Обновить панель?\n\nСначала создастся точка восстановления. Потом панель скачает и соберёт новую версию, это займёт пару минут, и перезапустится. Если что-то пойдёт не так, точка вернётся сама.")) return;
+  try {
+    renderUpdate(await api("api/control/update", {}));
+  } catch (err) {
+    uMessage(err.message, true);
+  }
+});
+
+$("p-create").addEventListener("click", async () => {
+  $("p-create").disabled = true;
+  const box = $("p-msg");
+  try {
+    const p = await api("api/control/restore", {});
+    box.className = "notice";
+    box.textContent = `Точка от ${when(p.created)} создана.`;
+    loadControl();
+  } catch (err) {
+    box.className = "notice bad";
+    box.textContent = err.message;
+  } finally {
+    box.hidden = false;
+    $("p-create").disabled = false;
+  }
+});
+
 async function load() {
   showTab();
   const me = await api("api/me");
@@ -216,6 +534,8 @@ async function load() {
   $("role").textContent = ROLES[me.role] || me.role;
   $("version").textContent = me.version;
   $("about-version").textContent = me.version;
+  controlVersion = me.version;
+  if (!$("tab-control").hidden) loadControl();
   renderAccess(me);
   renderSite(await api("api/site"));
 }
