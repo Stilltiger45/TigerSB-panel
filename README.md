@@ -27,9 +27,9 @@
 
 ---
 
-**TigerSB-panel** is a self-hosted VPN panel on Xray and sing-box that installs with one command. Add a person, send them a key or a QR code, and they are connected. From the outside the server looks like an ordinary website under maintenance.
+**TigerSB-panel** is your own VPN on your own server. Rent a VPS, run one command, and a couple of minutes later you have a web panel: add a person, send them a key or a QR code, and they are connected. From the outside the server looks like an ordinary website under maintenance.
 
-It is made for the [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client) app, and its plain `https://` subscriptions work in v2rayNG, Hiddify, Happ, Streisand and other Xray and sing-box clients.
+It is made for the [TigerSB](https://github.com/Stilltiger45/TigerSB-client) app, and its plain `https://` subscriptions work in v2rayNG, Hiddify, Happ, Streisand and other Xray and sing-box clients.
 
 <p align="center">
   <img src="docs/assets/screens.jpg" alt="Panel tabs: Overview, Users, Control and Protocols" width="100%">
@@ -37,67 +37,56 @@ It is made for the [TigerSB-client](https://github.com/Stilltiger45/TigerSB-clie
 
 <sub>Screenshots from a test server. The panel interface is in Russian.</sub>
 
-## Features
+**Contents:** [For users](#for-users) · [For developers](#for-developers)
 
-- **One-command install.** The installer sets up the panel, Caddy, Xray and sing-box, gets a Let's Encrypt certificate and prints the panel address. Running it again breaks nothing.
-- **Hidden panel.** It opens only on a secret path of your domain; every other address shows a harmless "Maintenance" page (four templates: bakery, photo blog, garden diary, book club). `tigersb close` hides the secret path too, and only `tigersb open` over SSH brings it back.
-- **Users in two clicks.** A name and a device count. Each user gets a `tigersb://` key and an `https://` subscription, both with a QR code. New users connect without restarting Xray, so nobody else is dropped.
-- **Device limit.** Devices are counted by HWID when they fetch the subscription, and over the limit no subscription is given out. The list shows model, OS, app, IP and last update, and a button removes a device.
-- **Four protocols in two containers.** Xray carries VLESS + REALITY over XHTTP and gRPC; port 443 is shared by the site and the protocols, and the server tells connections apart by SNI. sing-box carries TUIC v5 (QUIC over UDP 8443) and Hysteria 2 (UDP 443, Salamander obfuscation with an automatic password) with the site's real Let's Encrypt certificate. Each protocol card shows only its port; the rest folds away under "All settings", and every field is editable. The core checks the config before it is applied. A scanner finds SNI candidates for REALITY among the server's neighbours. A new protocol goes into the core that supports it.
-- **Protected subscriptions.** The TigerSB profile is signed with Ed25519, so nobody on the way can swap the servers. A wrong token returns the same maintenance page with the same headers as any other page of the site. Subscriptions keep working while the panel is closed or asleep.
-- **Server control.** CPU, memory, disk and network charts for 6 hours, a day or a week. Health checks for services, certificate, domain, disk space, clock and database, each with a hint on what to do.
-- **One-button update.** A restore point is made first, and if the new version does not start, the panel rolls back by itself and says why.
+# For users
+
+## What it does
+
+- **Installs with one command** and gets a certificate for your domain by itself. Running it again breaks nothing.
+- **Stays hidden.** The panel opens only on a secret address; every other address shows a harmless "Maintenance" page. «Закрыть панель» (Close panel) hides the secret address too, and only SSH can open it again.
+- **A user in two clicks:** a name and a device count. Each user gets a `tigersb://` key and an `https://` subscription, both with a QR code.
+- **Device limit.** Extra phones and computers get no subscription, and any device can be removed with a button.
+- **Four protocols:** VLESS + REALITY over XHTTP and gRPC, TUIC and Hysteria 2. Everything is set up from the start; changing anything is optional.
+- **Watches the server:** load charts and health checks with a hint on what to do when something is wrong.
+- **Updates with a button** and rolls back by itself if the new version does not start.
 
 Coming next: a cascade through a routing point in Russia (gRPC and TUIC), XHTTP through Yandex Cloud CDN.
 
-## Components
+## Quick start
 
-| Component | Role | License |
-|---|---|---|
-| [Xray-core](https://github.com/XTLS/Xray-core) 26.9.30 | VPN core: VLESS + REALITY, XHTTP, gRPC. Official image in Docker, pinned by digest | MPL-2.0 |
-| [sing-box](https://github.com/SagerNet/sing-box) 1.14.4 | second VPN core: TUIC v5 and Hysteria 2. Official image in Docker, pinned by digest | GPL-3.0-or-later |
-| [Caddy](https://caddyserver.com) 2.11.4 | maintenance site, Let's Encrypt certificate, panel and subscription routes | Apache-2.0 |
-| [Docker](https://www.docker.com) | runs Xray and sing-box without privileges on a read-only file system | Apache-2.0 |
-| [Go](https://go.dev) 1.26 | the panel, the port 443 splitter, the subscription service, metrics | BSD-3-Clause |
-| [SQLite](https://sqlite.org) (modernc, no cgo) | users, devices, settings, charts | BSD-3-Clause |
-| [pkg/profile](https://github.com/Stilltiger45/TigerSB-client/tree/main/pkg/profile) from TigerSB-client | TigerSB profile format and signature | GPL-3.0 |
+**1. What you need.** A clean VPS with Debian 11+ or Ubuntu 20.04+ (amd64 or arm64), a domain with an A record pointing to the server's IP, and root access.
 
-## Install
-
-You need a clean VPS with Debian 11+ or Ubuntu 20.04+ (amd64 or arm64), a domain with an A record pointing to it, and root access:
+**2. Install.** Connect to the server over SSH and run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/install.sh | sudo bash
 ```
 
-The installer asks for:
+The installer asks for the server role (pick "main server"; the "routing point" is for the upcoming cascade), the domain with an email for the certificate, and the admin login and password (at least 10 characters). At the end it prints the panel address, `https://<domain>/<secret path>/`. Keep it; `tigersb info` on the server shows it again.
 
-1. **Server role.** The "main server" sends traffic to the internet and hosts the panel. The "routing point" is for the upcoming cascade.
-2. The domain and an email for the certificate.
-3. The admin login and password (at least 10 characters).
+If your hosting has its own firewall, open ports 443 and 8443 for TCP and UDP there.
 
-At the end it prints the panel address, `https://<domain>/<secret path>/`. Keep it; `tigersb info` on the server shows it again. Building from source takes a couple of minutes.
+**3. Add a person.** Open the panel address, log in, add a person on the **Пользователи** (Users) tab and click them: the TigerSB key and the https subscription appear with QR codes.
 
-If your hosting has its own firewall, open ports 443 and 8443 for TCP and 443 and 8443 for UDP (Hysteria 2 and TUIC) there.
+**4. Connect a device.** Download [TigerSB for Android](https://github.com/Stilltiger45/TigerSB-client/releases/latest/download/TigerSB-android.apk), open the `tigersb://` key on the phone (or scan the QR code, or paste the key into the app) and press the connect button. In v2rayNG, Hiddify and others, add the https link as a subscription.
 
-## First steps
+**5. Hide the panel.** When you are done, press «Закрыть панель» (Close panel) on the Overview tab. To open it again, run `tigersb open` over SSH.
 
-1. Open the panel address and log in.
-2. On the **Пользователи** (Users) tab, add a person and click them: the TigerSB key and the https subscription appear with QR codes.
-3. Send the key or show the QR code. In [TigerSB](https://github.com/Stilltiger45/TigerSB-client) the key is all it takes; in v2rayNG, Hiddify and others, add the https link as a subscription.
-4. When you are done, press «Закрыть панель» (Close panel) on the Overview tab. To open it again, run `tigersb open` over SSH.
+Every tab in detail: the [panel guide](docs/guide.md) (in Russian).
 
 ## Update and uninstall
 
-The easiest way to update is the «Обновить панель» (Update panel) button on the Контроль (Control) tab, or `tigersb update` on the server. Settings, users and the database are kept, and the VPN keeps working during the update.
+Update: the «Обновить панель» (Update panel) button on the Контроль (Control) tab, or `tigersb update` on the server. Users and settings are kept, and the VPN keeps working during the update.
 
-To remove everything from the server (asks for confirmation and offers to save a copy of the settings and database):
+Remove everything (asks for confirmation and offers to save a copy of the settings and database):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/uninstall.sh | sudo bash
 ```
 
-## Server commands
+<details>
+<summary><b>Server commands</b></summary>
 
 | Command | What it does |
 |---|---|
@@ -121,14 +110,45 @@ curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scr
 | `tigersb singbox apply` | rebuild the sing-box config and certificate copy, test them and restart |
 | `tigersb monitor` | take metrics and run health checks now (a timer does this every 5 minutes) |
 
-## Documentation
+</details>
 
-- [Panel guide](docs/guide.md) (in Russian): every tab, login and the SSH tunnel, subscriptions and the device limit, updates and restore points, login protection.
-- [Architecture](docs/architecture.md) (in Russian): services, ports, database, how settings are applied.
-- [Profile and key format](https://github.com/Stilltiger45/TigerSB-client/blob/main/docs/profile.md) in the client repository.
-- [SECURITY.md](SECURITY.md): how to report a vulnerability.
+# For developers
 
-## Development
+## Components
+
+| Component | Role | License |
+|---|---|---|
+| [Xray-core](https://github.com/XTLS/Xray-core) 26.9.30 | VPN core: VLESS + REALITY, XHTTP, gRPC. Official image in Docker, pinned by digest | MPL-2.0 |
+| [sing-box](https://github.com/SagerNet/sing-box) 1.14.4 | second VPN core: TUIC v5 and Hysteria 2. Official image in Docker, pinned by digest | GPL-3.0-or-later |
+| [Caddy](https://caddyserver.com) 2.11.4 | maintenance site, Let's Encrypt certificate, panel and subscription routes | Apache-2.0 |
+| [Docker](https://www.docker.com) | runs Xray and sing-box without privileges on a read-only file system | Apache-2.0 |
+| [Go](https://go.dev) 1.26 | the panel, the port 443 splitter, the subscription service, metrics | BSD-3-Clause |
+| [SQLite](https://sqlite.org) (modernc, no cgo) | users, devices, settings, charts | BSD-3-Clause |
+| [pkg/profile](https://github.com/Stilltiger45/TigerSB-client/tree/main/pkg/profile) from TigerSB-client | TigerSB profile format and signature | GPL-3.0 |
+
+## How it works
+
+- **One Go binary, `tigersb`,** and several `tigersb-*` systemd services: the web panel, the port 443 splitter, subscriptions, Caddy, Xray, sing-box, the health check timer and the updater. All data lives in SQLite under `/var/lib/tigersb`.
+- **Port 443 is shared.** The `tigersb-edge` service reads the SNI and hands the connection either to Caddy (site, panel, subscriptions) or to the matching Xray protocol. Hysteria 2 takes UDP 443, TUIC takes UDP 8443.
+- **The panel writes the configs**, has the core itself check them, and only then applies them. Users are added to Xray through its API without a restart.
+- **Subscriptions** come from a separate `tigersb-sub` service, so they keep working while the panel is closed or asleep. The TigerSB app gets a signed profile, other clients get a list of `vless://` links.
+- **Updates** run in a separate service outside the panel: restore point, install, check, rollback on failure.
+
+Details: [architecture](docs/architecture.md) (in Russian), [profile and key format](https://github.com/Stilltiger45/TigerSB-client/blob/main/docs/profile.md).
+
+## Security
+
+- **Hidden panel.** It listens on `127.0.0.1` only, and Caddy publishes it on a secret path. `tigersb close` and `tigersb sleep` hide that path too, and only `tigersb open` over SSH brings it back. An SSH tunnel is the fallback way in.
+- **Login.** Passwords are stored as Argon2id, sessions as a SHA-256 of the token. Cookies are `HttpOnly`, `SameSite=Strict`, limited to the secret path (and `Secure` when logging in through the domain); a session lasts 12 hours. Five failed attempts lock a login for 15 minutes, and 30 in total lock the whole login. Changes are accepted only as same-origin JSON, and pages are served with a CSP and `X-Frame-Options`.
+- **Signed profile.** The panel creates an Ed25519 key once and signs every profile with it. The public key is part of the `tigersb://` key, and the client accepts only a profile with that signature, so nobody on the way can swap the servers.
+- **Invisible subscriptions.** A wrong token, a disabled user or a service that is down all return the same maintenance page with the same headers as any other page of the site. Responses are not cached, and the `Server` and `Via` headers are removed.
+- **HWID device limit.** The client sends `x-hwid` and device details, and a new device over the limit gets no subscription. The device IP comes from the PROXY header set by the port 443 service, so `X-Forwarded-For` cannot fake it.
+- **Isolated cores.** Xray and sing-box run from official images pinned by digest, without privileges (`--cap-drop ALL`), on a read-only file system and with no logs, so no user addresses are left on disk.
+- **Verified downloads.** Caddy is a pinned version checked against its SHA-512. The certificate is issued over TLS-ALPN, and port 80 stays closed.
+
+To report a vulnerability privately, see [SECURITY.md](SECURITY.md).
+
+## Build and test
 
 ```bash
 go test ./...
@@ -145,6 +165,12 @@ sudo ./scripts/install.sh            # or --binary ./tigersb-linux-amd64 with a 
 
 CI runs `gofmt`, `go vet`, the tests with `-race`, `shellcheck` on the scripts and a dependency license check. A `v*` tag builds a release with `tigersb-linux-amd64` and `tigersb-linux-arm64`.
 
-## License
+## Licenses
 
-GPL-3.0, see [LICENSE](LICENSE). It matches the license of [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client), so the panel can use its `pkg/profile` package. All Go dependencies are MIT or BSD and compatible with GPL-3.0. Third-party components, including Caddy (Apache-2.0), and borrowed ideas are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and on the «О панели» (About) tab. `scripts/check-licenses.sh` enforces this in CI: it fails when a dependency has no license or an incompatible one (AGPL, SSPL, BSL and similar).
+The panel is **GPL-3.0**, see [LICENSE](LICENSE). It matches the license of [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client), so the panel can use its `pkg/profile` package.
+
+- **Go dependencies** are MIT or BSD only, all compatible with GPL-3.0. `scripts/check-licenses.sh` fails CI when a dependency has no license or an incompatible one (AGPL, SSPL, BSL and similar).
+- **Programs next to the panel** (Xray MPL-2.0, sing-box GPL-3.0, Caddy Apache-2.0, Docker Apache-2.0) are installed from official builds without changes and run as separate programs. No sing-box code is in the panel; the panel only writes its config.
+- **Borrowed ideas.** From [web-panel-proxy](https://github.com/POLESNIESOVETI12/web-panel-proxy) (MIT): TLS-ALPN-only certificates, a pinned Caddy and the update flow with a restore point; from [OlConnect_manager](https://github.com/Oleglog/OlConnect_manager) (WTFPL): one-command install and uninstall; from [RealiTLScanner](https://github.com/XTLS/RealiTLScanner) (MPL-2.0): the SNI scanner. No code from these projects was copied; everything is written anew in Go.
+
+The full list with versions is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and on the «О панели» (About) tab.
