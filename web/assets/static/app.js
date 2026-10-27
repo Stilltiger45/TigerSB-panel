@@ -339,6 +339,7 @@ function renderHealth(r) {
   $("h-time").textContent = "проверено " + when(r.checked);
   // Problems first; the order within each state stays as the server sent it.
   const order = { fail: 0, warn: 1, ok: 2, off: 3, soon: 4 };
+  $("h-sum").textContent = `Все проверки (${r.results.length})`;
   const sorted = [...r.results].sort((a, b) => (order[a.state] ?? 3) - (order[b.state] ?? 3));
   for (const res of sorted) {
     const li = document.createElement("li");
@@ -354,6 +355,69 @@ function renderHealth(r) {
     detail.textContent = res.detail;
     li.append(title, p, detail);
     list.append(li);
+  }
+}
+
+// ---- VPN cores: one card per container with a restart button ----
+const CORE_DROP = { xray: "Подключения через gRPC и XHTTP прервутся на секунду.", singbox: "Подключения через TUIC прервутся, клиенты переподключатся за несколько секунд." };
+
+function coreMessage(text, bad) {
+  const box = $("core-msg");
+  box.textContent = text;
+  box.className = bad ? "notice bad" : "notice";
+  box.hidden = !text;
+}
+
+let coresData = [];
+
+function renderCores(cores, report) {
+  coresData = cores || [];
+  const box = $("cores");
+  box.replaceChildren();
+  for (const c of coresData) {
+    const res = report && report.results.find((x) => x.id === c.id);
+    const card = document.createElement("div");
+    card.className = "glass core-card";
+    const head = document.createElement("div");
+    head.className = "head-row";
+    const h = document.createElement("h2");
+    h.textContent = c.title + " ";
+    const tag = document.createElement("span");
+    tag.className = "tag core";
+    tag.textContent = c.protocols;
+    h.append(tag);
+    const pill = document.createElement("span");
+    if (c.state !== "active") [pill.className, pill.textContent] = ["pill bad", "не работает: " + c.state];
+    else if (res) {
+      const [cls, text] = HEALTH[res.state] || ["off", res.state];
+      [pill.className, pill.textContent] = ["pill " + cls, text];
+    } else [pill.className, pill.textContent] = ["pill ok", "работает"];
+    head.append(h, pill);
+    const detail = document.createElement("p");
+    detail.className = "muted";
+    detail.textContent = res ? res.detail : "Контейнер " + (c.state === "active" ? "запущен." : "остановлен.");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = c.state === "active" && (!res || res.state !== "fail") ? "ghost" : "";
+    btn.textContent = "Перезапустить";
+    btn.addEventListener("click", async () => {
+      if (!confirm(`Перезапустить ${c.title}?\n\n${CORE_DROP[c.id] || ""}`)) return;
+      btn.disabled = true;
+      btn.textContent = "Перезапускаю…";
+      coreMessage("");
+      try {
+        const d = await api("api/control/core", { core: c.id });
+        renderHealth(d.health);
+        renderCores(d.cores, d.health);
+        coreMessage(d.warning || `${c.title} перезапущен.`, !!d.warning);
+      } catch (err) {
+        coreMessage(err.message, true);
+        btn.disabled = false;
+        btn.textContent = "Перезапустить";
+      }
+    });
+    card.append(head, detail, btn);
+    box.append(card);
   }
 }
 
@@ -428,6 +492,7 @@ async function loadControl() {
     renderMeters(d.latest);
     renderCharts(d.history);
     renderHealth(d.health);
+    renderCores(d.cores, d.health);
     renderPoints(d.points);
     renderUpdate(d.update);
   } catch (err) {
@@ -486,7 +551,9 @@ $("range").addEventListener("click", (e) => {
 $("h-run").addEventListener("click", async () => {
   $("h-run").disabled = true;
   try {
-    renderHealth(await api("api/control/health", {}));
+    const r = await api("api/control/health", {});
+    renderHealth(r);
+    renderCores(coresData, r);
   } catch (err) {
     uMessage(err.message, true);
   } finally {

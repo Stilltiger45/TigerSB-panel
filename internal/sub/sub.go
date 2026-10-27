@@ -40,8 +40,12 @@ const Unit = "tigersb-sub.service"
 // signed with. Clients pin its public key, so it never changes by itself.
 const KeySigning = "sub.key"
 
-// Name is what clients show for the subscription.
+// Name is the brand in the subscription titles.
 const Name = "TigerSB"
+
+// Title is what other clients show for a user's subscription. The TigerSB
+// client already carries the brand, so its profile is named by the user.
+func Title(user string) string { return Name + " · " + user }
 
 // UpdateHours is how often clients are asked to refresh the subscription.
 const UpdateHours = 6
@@ -99,14 +103,15 @@ type Links struct {
 
 // LinksFor returns the subscription links of a user, or nothing without a
 // domain: a subscription needs a certificate.
-func LinksFor(domain, pk, token string) *Links {
+func LinksFor(domain, pk string, u store.User) *Links {
+	token := u.SubToken
 	if domain == "" || token == "" {
 		return nil
 	}
 	k := url.Values{}
 	k.Set("url", URL(domain, token))
 	k.Set("pk", pk)
-	k.Set("name", Name)
+	k.Set("name", u.Name)
 	return &Links{TigerSB: profile.Scheme + "://add?" + k.Encode(), HTTPS: URL(domain, token)}
 }
 
@@ -116,7 +121,7 @@ var prio = map[string]int{xray.XHTTPTag: 10, xray.GRPCTag: 20, singbox.TUICTag: 
 
 // Profile builds the signed profile of a user: one exit (this server) with
 // every enabled protocol of every core.
-func Profile(priv ed25519.PrivateKey, links []core.Link, domain, token string, now time.Time) ([]byte, error) {
+func Profile(priv ed25519.PrivateKey, links []core.Link, domain string, u store.User, now time.Time) ([]byte, error) {
 	exit := profile.Exit{ID: "main", Role: profile.RoleForeign}
 	for _, l := range links {
 		out, _, err := profile.ParseLink(l.URL)
@@ -131,9 +136,9 @@ func Profile(priv ed25519.PrivateKey, links []core.Link, domain, token string, n
 	p := profile.Profile{
 		V:       profile.Version,
 		ID:      "tigersb",
-		Name:    Name,
+		Name:    u.Name,
 		Updated: now.UTC().Truncate(time.Second),
-		Update:  &profile.Update{URL: URL(domain, token), Every: strconv.Itoa(UpdateHours) + "h"},
+		Update:  &profile.Update{URL: URL(domain, u.SubToken), Every: strconv.Itoa(UpdateHours) + "h"},
 		Exits:   []profile.Exit{exit},
 		Routing: profile.Routing{Blocked: profile.Matchers{
 			Domains: []string{"geosite:ru-blocked"},
@@ -264,7 +269,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ua := r.UserAgent()
 	hdr := w.Header()
 	hdr.Set("Cache-Control", "no-store")
-	hdr.Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte(Name)))
+	hdr.Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte(Title(u.Name))))
 	hdr.Set("Profile-Update-Interval", strconv.Itoa(UpdateHours))
 	hdr.Set("Subscription-Userinfo", fmt.Sprintf("upload=%d; download=%d; total=0; expire=0", u.Up, u.Down))
 
@@ -310,7 +315,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	priv, err := SigningKey(ctx, h.Store)
 	if err == nil {
 		var body []byte
-		if body, err = Profile(priv, links, domain, token, h.now()); err == nil {
+		if body, err = Profile(priv, links, domain, *u, h.now()); err == nil {
 			hdr.Set("Content-Type", "application/json")
 			w.Write(body)
 			return

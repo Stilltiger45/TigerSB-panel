@@ -256,8 +256,6 @@ img.qr { width: 240px; max-width: 100%; border-radius: 12px; background: #fff; p
 .device-main small { overflow-wrap: anywhere; }
 .device-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .device .pill { font-size: 0.72rem; padding: 2px 8px; }
-.online ul.ips { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
-.online p { margin: 4px 0 0; }
 .user-controls { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .user-controls .row { flex-wrap: nowrap; }
 input.num { width: 96px; flex: 0 0 auto; }
@@ -297,3 +295,21 @@ table.scan tr.dim td { color: var(--muted); }
 table.scan .row { flex-wrap: nowrap; }
 .savebar { display: grid; gap: 10px; }
 .savebar .hint { margin: 0; }
+
+/* About: the header and the short list of parts, like the client's screen. */
+.about-head { text-align: center; display: grid; justify-items: center; gap: 4px; padding: 8px 0 4px; }
+.about-head img { width: 88px; height: 88px; }
+.about-head h2 { margin: 6px 0 0; font-size: 1.6rem; }
+.about-head p { margin: 0; }
+.parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.parts li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.parts li:last-child { border-bottom: 0; padding-bottom: 0; }
+.glass > details.more:only-child { border-top: 0; padding-top: 0; }
+.glass > details.more:only-child > summary { margin: 0; }
+
+/* Control: the VPN core cards. */
+.core-card { display: grid; gap: 10px; align-content: start; }
+.core-card .head-row { margin: 0; }
+.core-card h2 { margin: 0; }
+.core-card p { margin: 0; }
+.core-card button { justify-self: start; }

@@ -157,7 +157,7 @@ func (s *Server) usersState(ctx context.Context) (*usersResponse, error) {
 		v := userView{
 			ID: u.ID, Name: u.Name, UUID: u.UUID, Devices: u.Devices, Enabled: u.Enabled,
 			Created: u.Created, Up: u.Up, Down: u.Down, SeenAt: u.SeenAt, Online: []xray.Address{},
-			Subs: sub.LinksFor(domain, pk, u.SubToken), List: []deviceView{},
+			Subs: sub.LinksFor(domain, pk, u), List: []deviceView{},
 		}
 		if resp.Live {
 			if l, ok := live[u.ID]; ok {
@@ -452,7 +452,7 @@ func (s *Server) handleUserQR(w http.ResponseWriter, r *http.Request) {
 		internalError(w)
 		return
 	}
-	links := sub.LinksFor(domain, pk, u.SubToken)
+	links := sub.LinksFor(domain, pk, *u)
 	if links == nil {
 		http.NotFound(w, r)
 		return
