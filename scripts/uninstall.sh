@@ -9,6 +9,7 @@ BIN=/usr/local/bin/tigersb
 CONF_DIR=/etc/tigersb
 DATA_DIR=/var/lib/tigersb
 LIB_DIR=/usr/local/lib/tigersb
+CACHE_DIR=/var/cache/tigersb
 UNIT_DIR=/etc/systemd/system
 
 yes=0
@@ -104,7 +105,7 @@ if command -v docker >/dev/null; then
 fi
 
 echo "Удаляю файлы..."
-rm -rf "$CONF_DIR" "$DATA_DIR" "$BIN" "$LIB_DIR"
+rm -rf "$CONF_DIR" "$DATA_DIR" "$BIN" "$LIB_DIR" "$CACHE_DIR"
 
 echo
 echo "TigerSB полностью удалён."
