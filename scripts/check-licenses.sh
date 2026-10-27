@@ -12,7 +12,8 @@ while read -r dir path; do
 		bad=1
 		continue
 	fi
-	if grep -qiE 'GNU AFFERO|SERVER SIDE PUBLIC LICENSE|Business Source License|Commons Clause' "$file"; then
+	# Only the title counts: the GPL-3.0 text itself mentions the AGPL.
+	if head -n 20 "$file" | grep -qiE 'GNU AFFERO|SERVER SIDE PUBLIC LICENSE|Business Source License' || grep -qi 'Commons Clause' "$file"; then
 		echo "НЕСОВМЕСТИМАЯ ЛИЦЕНЗИЯ: $path ($file)" >&2
 		bad=1
 		continue

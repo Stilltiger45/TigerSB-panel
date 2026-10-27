@@ -72,12 +72,13 @@ function userState(u) {
   const n = u.online.length;
   if (u.over) return ["bad", `превышение: ${n} из ${u.devices}`];
   if (n) return ["ok", `в сети: ${n} из ${u.devices}`];
-  return ["off", `устройств: ${u.devices}`];
+  return ["off", `устройств: ${u.device_list.length} из ${u.devices}`];
 }
 
 function renderUsers(d) {
   usersData = d;
   unitPill($("users-xray"), "Xray", d.xray);
+  unitPill($("users-sub"), "Подписки", d.sub);
   if (d.warning) notice("users-msg", d.warning, true);
   $("users-count").textContent = d.users.length ? `· ${d.users.length}` : "";
   $("users-filter").hidden = d.users.length < 8;
@@ -125,29 +126,90 @@ async function changeUser(body, btn) {
   }
 }
 
-function userBody(u) {
-  const body = el("div", { class: "user-body" });
+const SUBS = [
+  { kind: "tigersb", title: "Ключ TigerSB", hint: "Для приложения TigerSB: профиль подписан ключом панели, подменить его нельзя." },
+  { kind: "https", title: "Подписка https", hint: "Для v2rayNG, Hiddify, Happ, Streisand и других. TigerSB её тоже понимает." },
+];
 
-  const links = el("div", { class: "links" });
-  for (const l of u.links) {
-    const qr = el("img", { class: "qr", alt: "QR-код " + l.title, hidden: true });
+function agoText(sec) {
+  const m = Math.round((Date.now() / 1000 - sec) / 60);
+  if (m < 2) return "только что";
+  if (m < 60) return `${m} мин назад`;
+  return when(sec * 1000);
+}
+
+function subBlock(u) {
+  const box = el("div", { class: "links" }, el("h3", { text: "Подписки" }));
+  if (!u.subs) {
+    box.append(el("p", { class: "muted", text: "Подпискам нужен домен с сертификатом: задайте его на вкладке «Сайт и сертификат»." }));
+    return box;
+  }
+  for (const s of SUBS) {
+    const url = u.subs[s.kind];
+    const qr = el("img", { class: "qr", alt: "QR-код: " + s.title, hidden: true });
     const qrBtn = el("button", {
       type: "button", class: "ghost small", text: "QR",
       onclick: () => {
-        if (!qr.src) qr.src = `api/users/qr?id=${u.id}&p=${l.protocol}&k=${encodeURIComponent(u.uuid)}`;
+        if (!qr.src) qr.src = `api/users/qr?id=${u.id}&kind=${s.kind}&k=${encodeURIComponent(u.subs.https)}`;
         qr.hidden = !qr.hidden;
       },
     });
-    const copyBtn = el("button", { type: "button", class: "ghost small", text: "Копировать", onclick: (e) => copy(l.url, e.target) });
-    links.append(el("div", { class: "link-row" },
-      el("div", { class: "link-head" }, el("b", { text: l.protocol === "grpc" ? "gRPC" : "XHTTP" }), el("span", { class: "row" }, copyBtn, qrBtn)),
-      el("code", { class: "mono link-text", text: l.url }),
+    const copyBtn = el("button", { type: "button", class: "ghost small", text: "Копировать", onclick: (e) => copy(url, e.target) });
+    box.append(el("div", { class: "link-row" },
+      el("div", { class: "link-head" }, el("b", { text: s.title }), el("span", { class: "row" }, copyBtn, qrBtn)),
+      el("code", { class: "mono link-text", text: url }),
+      el("small", { class: "faint", text: s.hint }),
       qr));
   }
-  if (!u.links.length) links.append(el("p", { class: "muted", text: "Все протоколы выключены на вкладке «Протоколы»." }));
-  body.append(links);
+  return box;
+}
 
-  const online = el("div", { class: "online" }, el("span", { class: "muted", text: "Подключены сейчас" }));
+function deviceBlock(u) {
+  const box = el("div", { class: "devices" },
+    el("h3", {}, "Устройства ", el("span", { class: "faint", text: `${u.device_list.length} из ${u.devices}` })));
+  if (!u.device_list.length) {
+    box.append(el("p", { class: "faint", text: "Устройство появится здесь, когда приложение впервые скачает подписку." }));
+    return box;
+  }
+  const ul = el("ul", { class: "device-list" });
+  for (const d of u.device_list) {
+    const app = d.app.split(" ")[0];
+    const title = d.model || app.split("/")[0] || "Устройство";
+    const os = [d.os, d.os_version].filter(Boolean).join(" ");
+    const del = el("button", {
+      type: "button", class: "ghost small danger", text: "Удалить",
+      onclick: async (e) => {
+        if (!confirm(`Удалить «${title}» из устройств «${u.name}»? Место освободится. Если устройство снова обновит подписку, оно займёт место заново, пока есть свободные. Чтобы отключить его насовсем, выдайте «Новые ссылки».`)) return;
+        e.target.disabled = true;
+        notice("users-msg", "");
+        try {
+          renderUsers(await api("api/users/device/delete", { user_id: u.id, id: d.id }));
+        } catch (err) {
+          notice("users-msg", err.message, true);
+          e.target.disabled = false;
+        }
+      },
+    });
+    const meta = [os, app].filter(Boolean).join(" · ");
+    ul.append(el("li", { class: "device" },
+      el("div", { class: "device-main" },
+        el("div", { class: "device-title" },
+          el("b", { text: title }),
+          d.online ? el("span", { class: "pill ok", text: "в сети" }) : "",
+          d.no_hwid ? el("span", { class: "pill off", text: "без HWID", title: "Приложение не сообщает HWID: панель считает его одним устройством на приложение." }) : ""),
+        meta ? el("small", { class: "muted", text: meta }) : "",
+        el("small", { class: "faint", text: `${d.ip ? d.ip + " · " : ""}подписка обновлена ${agoText(d.last_seen)} · с ${when(d.first_seen * 1000)}` })),
+      del));
+  }
+  box.append(ul);
+  return box;
+}
+
+function userBody(u) {
+  const body = el("div", { class: "user-body" });
+  body.append(subBlock(u), deviceBlock(u));
+
+  const online = el("div", { class: "online" }, el("span", { class: "muted", text: "Подключены к VPN сейчас" }));
   if (u.online.length) {
     const ul = el("ul", { class: "ips" });
     for (const a of u.online) ul.append(el("li", {}, el("code", { text: a.ip }), el("small", { class: "faint", text: a.last_seen ? " · " + when(a.last_seen * 1000) : "" })));
@@ -173,7 +235,7 @@ function userBody(u) {
     el("button", {
       type: "button", class: "ghost", text: "Новые ссылки",
       onclick: (e) => {
-        if (confirm(`Выдать «${u.name}» новые ссылки? Все устройства со старыми ссылками сразу отключатся.`)) changeUser({ id: u.id, reissue: true }, e.target);
+        if (confirm(`Выдать «${u.name}» новые ссылки? Старые подписки перестанут работать, все устройства сразу отключатся и список устройств очистится.`)) changeUser({ id: u.id, reissue: true }, e.target);
       },
     }),
     el("button", {
@@ -208,7 +270,7 @@ $("user-form").addEventListener("submit", async (e) => {
     const added = d.users[d.users.length - 1];
     if (added) openUsers.add(added.id);
     renderUsers(d);
-    if (!d.warning) notice("users-msg", `«${form.name.value.trim()}» добавлен. Отправьте ему ссылку или покажите QR-код.`);
+    if (!d.warning) notice("users-msg", `«${form.name.value.trim()}» добавлен. Отправьте ему ключ или подписку, или покажите QR-код.`);
     form.name.value = "";
   } catch (err) {
     notice("users-msg", err.message, true);

@@ -3,9 +3,11 @@ module github.com/Stilltiger45/TigerSB-panel
 go 1.26.0
 
 require (
+	github.com/Stilltiger45/TigerSB-client v0.0.0-20261026165153-715f5fd9cd28
 	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0
 	modernc.org/sqlite v1.61.0
+	rsc.io/qr v0.2.0
 )
 
 require (
@@ -18,5 +20,4 @@ require (
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )

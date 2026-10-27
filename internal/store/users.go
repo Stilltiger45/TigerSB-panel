@@ -23,14 +23,16 @@ type User struct {
 	Down    int64
 	Online  string
 	SeenAt  int64
+	// SubToken is the secret part of the subscription address.
+	SubToken string
 }
 
-const userColumns = `id, name, uuid, devices, enabled, created_at, up, down, online, seen_at`
+const userColumns = `id, name, uuid, devices, enabled, created_at, up, down, online, seen_at, sub_token`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	u := &User{}
 	var created int64
-	err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.Devices, &u.Enabled, &created, &u.Up, &u.Down, &u.Online, &u.SeenAt)
+	err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.Devices, &u.Enabled, &created, &u.Up, &u.Down, &u.Online, &u.SeenAt, &u.SubToken)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -48,8 +50,8 @@ func uniqueErr(err error) error {
 // AddUser creates a user and fills its ID.
 func (s *Store) AddUser(ctx context.Context, u *User) error {
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (name, uuid, devices, enabled, created_at) VALUES (?, ?, ?, ?, ?)`,
-		u.Name, u.UUID, u.Devices, u.Enabled, u.Created.Unix())
+		INSERT INTO users (name, uuid, devices, enabled, created_at, sub_token) VALUES (?, ?, ?, ?, ?, ?)`,
+		u.Name, u.UUID, u.Devices, u.Enabled, u.Created.Unix(), u.SubToken)
 	if err != nil {
 		return uniqueErr(err)
 	}
@@ -80,11 +82,19 @@ func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUser(s.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id))
 }
 
+// UserByToken returns the user a subscription address belongs to.
+func (s *Store) UserByToken(ctx context.Context, token string) (*User, error) {
+	if token == "" {
+		return nil, ErrNotFound
+	}
+	return scanUser(s.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE sub_token = ?`, token))
+}
+
 // UpdateUser saves the fields an admin can change.
 func (s *Store) UpdateUser(ctx context.Context, u *User) error {
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE users SET name = ?, uuid = ?, devices = ?, enabled = ? WHERE id = ?`,
-		u.Name, u.UUID, u.Devices, u.Enabled, u.ID)
+		UPDATE users SET name = ?, uuid = ?, devices = ?, enabled = ?, sub_token = ? WHERE id = ?`,
+		u.Name, u.UUID, u.Devices, u.Enabled, u.SubToken, u.ID)
 	if err != nil {
 		return uniqueErr(err)
 	}

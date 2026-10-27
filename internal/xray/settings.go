@@ -274,12 +274,13 @@ func (s *Settings) Normalize() {
 // ports behind the edge router, the panel and plain HTTP.
 func Reserved(panelPort int) map[int]string {
 	return map[int]string{
-		80:         "HTTP (заглушка)",
-		TLSPort:    "Caddy",
-		10085:      "API Xray",
-		GRPCInner:  "внутренний порт gRPC",
-		XHTTPInner: "внутренний порт XHTTP",
-		panelPort:  "панель",
+		80:           "HTTP (заглушка)",
+		TLSPort:      "Caddy",
+		10085:        "API Xray",
+		site.SubPort: "подписки",
+		GRPCInner:    "внутренний порт gRPC",
+		XHTTPInner:   "внутренний порт XHTTP",
+		panelPort:    "панель",
 	}
 }
 

@@ -1,0 +1,200 @@
+package sub
+
+import (
+	"context"
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Stilltiger45/TigerSB-client/pkg/profile"
+
+	"github.com/Stilltiger45/TigerSB-panel/internal/store"
+)
+
+func setup(t *testing.T) (*Handler, *store.Store, *store.User) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "panel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	token, err := NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &store.User{Name: "Мама", UUID: "5783a3e7-e373-41cd-8642-c83782b807c5", Devices: 2, Enabled: true, Created: time.Now(), SubToken: token}
+	if err := st.AddUser(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{
+		Store:  st,
+		Domain: func(context.Context) (string, error) { return "vpn.example.com", nil },
+		Now:    func() time.Time { return time.Date(2026, 10, 27, 6, 0, 0, 0, time.UTC) },
+	}
+	return h, st, u
+}
+
+func get(h http.Handler, method, path, ua, hwid string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, nil)
+	req.RemoteAddr = "127.0.0.1:40000"
+	req.Header.Set("X-Forwarded-For", "203.0.113.50")
+	if ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
+	if hwid != "" {
+		req.Header.Set("X-Hwid", hwid)
+		req.Header.Set("X-Device-Os", "Android")
+		req.Header.Set("X-Ver-Os", "14")
+		req.Header.Set("X-Device-Model", "Pixel 8")
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestProfileForTigerSB(t *testing.T) {
+	h, st, u := setup(t)
+	w := get(h, http.MethodGet, "/sub/"+u.SubToken, "TigerSB-android/0.1", "hw1")
+	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("%d %v %s", w.Code, w.Header(), w.Body)
+	}
+	pk, err := PublicKey(context.Background(), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, _ := profile.DecodePublicKey(pk)
+	p, _, err := profile.Open(w.Body.Bytes(), pinned)
+	if err != nil {
+		t.Fatalf("client rejects the profile: %v\n%s", err, w.Body)
+	}
+	if p.Update == nil || p.Update.URL != "https://vpn.example.com/sub/"+u.SubToken || len(p.Exits) != 1 {
+		t.Fatalf("profile: %+v", p)
+	}
+	tr := p.Exits[0].Transports
+	if len(tr) != 2 || tr[0].ID != "grpc" || tr[0].Prio != 20 || tr[1].ID != "xhttp" || tr[1].Prio != 10 {
+		t.Fatalf("transports: %+v", tr)
+	}
+	if !strings.Contains(string(tr[1].Xray), u.UUID) || !strings.Contains(string(tr[1].Xray), `"network":"xhttp"`) {
+		t.Errorf("xhttp outbound: %s", tr[1].Xray)
+	}
+	// A key signed by anyone else is refused, so a forged subscription fails.
+	other, _, _ := profile.GenerateKey()
+	if _, _, err := profile.Open(w.Body.Bytes(), other); err == nil {
+		t.Error("profile accepted under another key")
+	}
+}
+
+func TestPlainForOtherClients(t *testing.T) {
+	h, _, u := setup(t)
+	w := get(h, http.MethodGet, "/sub/"+u.SubToken, "v2rayNG/1.10.16", "hw1")
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	raw, err := base64.StdEncoding.DecodeString(w.Body.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "vless://"+u.UUID+"@") {
+		t.Fatalf("links: %q", lines)
+	}
+	if w.Header().Get("Profile-Update-Interval") != "6" || !strings.HasPrefix(w.Header().Get("Subscription-Userinfo"), "upload=0; download=0") {
+		t.Errorf("headers: %v", w.Header())
+	}
+}
+
+// Everything that is not a live subscription is a plain 404, which Caddy
+// shows as the maintenance page.
+func TestMissesLookLikeTheSite(t *testing.T) {
+	h, st, u := setup(t)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/sub/" + strings.Repeat("A", 32)},
+		{http.MethodGet, "/sub/short"},
+		{http.MethodGet, "/sub/" + u.SubToken + "/x"},
+		{http.MethodGet, "/sub/../" + u.SubToken},
+		{http.MethodGet, "/other/" + u.SubToken},
+		{http.MethodPost, "/sub/" + u.SubToken},
+	} {
+		if w := get(h, tc.method, tc.path, "v2rayNG/1", "hw"); w.Code != http.StatusNotFound {
+			t.Errorf("%s %s: %d", tc.method, tc.path, w.Code)
+		}
+	}
+	u.Enabled = false
+	if err := st.UpdateUser(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	if w := get(h, http.MethodGet, "/sub/"+u.SubToken, "v2rayNG/1", "hw"); w.Code != http.StatusNotFound {
+		t.Errorf("disabled user: %d", w.Code)
+	}
+}
+
+func TestDeviceLimit(t *testing.T) {
+	h, st, u := setup(t)
+	path := "/sub/" + u.SubToken
+	for _, hw := range []string{"one", "two", "one"} {
+		if w := get(h, http.MethodGet, path, "TigerSB-android/0.1", hw); w.Code != http.StatusOK {
+			t.Fatalf("%s: %d", hw, w.Code)
+		}
+	}
+	if w := get(h, http.MethodGet, path, "TigerSB-android/0.1", "three"); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "Лимит устройств (2)") {
+		t.Fatalf("third device: %d %s", w.Code, w.Body)
+	}
+	// Other clients get one dead server whose name explains the limit.
+	w := get(h, http.MethodGet, path, "Hiddify/2.0", "three")
+	raw, _ := base64.StdEncoding.DecodeString(w.Body.String())
+	if w.Code != http.StatusOK || !strings.HasPrefix(string(raw), "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1") || strings.Contains(string(raw), u.UUID) {
+		t.Fatalf("limit for other clients: %d %s", w.Code, raw)
+	}
+	list, err := st.Devices(context.Background())
+	if err != nil || len(list) != 2 || list[0].Model != "Pixel 8" || list[0].IP != "203.0.113.50" || list[0].OSVersion != "14" {
+		t.Fatalf("devices: %v %+v", err, list)
+	}
+	// A freed place is taken by the next device.
+	if err := st.DeleteDevice(context.Background(), u.ID, list[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if w := get(h, http.MethodGet, path, "TigerSB-android/0.1", "three"); w.Code != http.StatusOK {
+		t.Fatalf("after delete: %d", w.Code)
+	}
+}
+
+// Clients without x-hwid take one place per app; a forwarded address counts
+// only when Caddy on loopback sent it.
+func TestDeviceWithoutHWID(t *testing.T) {
+	h, st, u := setup(t)
+	get(h, http.MethodGet, "/sub/"+u.SubToken, "v2rayNG/1.10.16", "")
+	get(h, http.MethodGet, "/sub/"+u.SubToken, "v2rayNG/1.10.17", "")
+	req := httptest.NewRequest(http.MethodGet, "/sub/"+u.SubToken, nil)
+	req.RemoteAddr = "198.51.100.7:1234"
+	req.Header.Set("X-Forwarded-For", "10.0.0.1")
+	req.Header.Set("User-Agent", "Happ/1.0")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	list, _ := st.Devices(context.Background())
+	if len(list) != 2 || list[0].HWID != "app:v2rayNG" || list[0].App != "v2rayNG/1.10.17" || list[1].IP != "198.51.100.7" {
+		t.Fatalf("devices: %+v", list)
+	}
+}
+
+func TestSigningKeyStays(t *testing.T) {
+	_, st, _ := setup(t)
+	a, err := PublicKey(context.Background(), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := PublicKey(context.Background(), st)
+	if a != b || len(a) != 43 {
+		t.Fatalf("key changed or malformed: %q %q", a, b)
+	}
+	if LinksFor("", a, "tok") != nil {
+		t.Error("links without a domain")
+	}
+	l := LinksFor("vpn.example.com", a, "tok")
+	k, err := profile.ParseKey(l.TigerSB)
+	if err != nil || k.URL != "https://vpn.example.com/sub/tok" || k.Name != Name {
+		t.Fatalf("key %s: %v %+v", l.TigerSB, err, k)
+	}
+}

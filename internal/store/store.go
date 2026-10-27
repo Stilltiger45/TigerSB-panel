@@ -61,6 +61,24 @@ var migrations = []string{
 		online     TEXT NOT NULL DEFAULT '[]',
 		seen_at    INTEGER NOT NULL DEFAULT 0
 	)`,
+	// Subscription address of each user: /sub/<sub_token>.
+	`ALTER TABLE users ADD COLUMN sub_token TEXT NOT NULL DEFAULT ''`,
+	`UPDATE users SET sub_token = lower(hex(randomblob(16)))`,
+	`CREATE UNIQUE INDEX users_sub_token ON users(sub_token)`,
+	// Devices that fetched a user's subscription, told apart by x-hwid.
+	`CREATE TABLE devices (
+		id         INTEGER PRIMARY KEY,
+		user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		hwid       TEXT NOT NULL,
+		os         TEXT NOT NULL DEFAULT '',
+		os_version TEXT NOT NULL DEFAULT '',
+		model      TEXT NOT NULL DEFAULT '',
+		app        TEXT NOT NULL DEFAULT '',
+		ip         TEXT NOT NULL DEFAULT '',
+		first_seen INTEGER NOT NULL,
+		last_seen  INTEGER NOT NULL,
+		UNIQUE (user_id, hwid)
+	)`,
 }
 
 // Open opens (creating if needed) the database at path and applies migrations.
@@ -215,6 +233,18 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string) error
 		}
 	}
 	return tx.Commit()
+}
+
+// SettingOnce stores value under key unless the key is already set, and
+// returns what is stored. Two processes calling it at once agree on one value.
+func (s *Store) SettingOnce(ctx context.Context, key, value string) (string, error) {
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING`, key, value); err != nil {
+		return "", err
+	}
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	return v, err
 }
 
 // AddMetric stores one resource sample, encoded by the caller.

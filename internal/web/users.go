@@ -18,6 +18,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
+	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
 
@@ -28,7 +29,7 @@ type userView struct {
 	ID      int64          `json:"id"`
 	Name    string         `json:"name"`
 	UUID    string         `json:"uuid"`
-	Devices int            `json:"devices"`
+	Devices int            `json:"devices"` // the limit
 	Enabled bool           `json:"enabled"`
 	Created time.Time      `json:"created"`
 	Up      int64          `json:"up"`
@@ -36,13 +37,30 @@ type userView struct {
 	Online  []xray.Address `json:"online"`
 	SeenAt  int64          `json:"seen_at"`
 	Over    bool           `json:"over"` // more addresses online than devices allowed
-	Links   []xray.Link    `json:"links"`
+	Subs    *sub.Links     `json:"subs"` // nil without a domain
+	List    []deviceView   `json:"device_list"`
+}
+
+// deviceView is a device that fetched the subscription.
+type deviceView struct {
+	ID        int64  `json:"id"`
+	Model     string `json:"model"`
+	OS        string `json:"os"`
+	OSVersion string `json:"os_version"`
+	App       string `json:"app"`
+	IP        string `json:"ip"`
+	NoHWID    bool   `json:"no_hwid"` // counted per app: the client sent no x-hwid
+	Online    bool   `json:"online"`  // its address is connected to Xray now
+	FirstSeen int64  `json:"first_seen"`
+	LastSeen  int64  `json:"last_seen"`
 }
 
 type usersResponse struct {
 	Users   []userView `json:"users"`
 	Address string     `json:"address"`
+	Domain  string     `json:"domain"`
 	Xray    string     `json:"xray"`
+	Sub     string     `json:"sub"`  // state of tigersb-sub
 	Live    bool       `json:"live"` // traffic and online come from the running Xray
 	Warning string     `json:"warning,omitempty"`
 }
@@ -103,7 +121,26 @@ func (s *Server) usersState(ctx context.Context) (*usersResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp := &usersResponse{Users: []userView{}, Address: s.address(ctx, set), Xray: s.xrayState()}
+	domain, err := s.domain(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pk, err := sub.PublicKey(ctx, s.store)
+	if err != nil {
+		return nil, err
+	}
+	devices, err := s.store.Devices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byUser := map[int64][]store.Device{}
+	for _, d := range devices {
+		byUser[d.UserID] = append(byUser[d.UserID], d)
+	}
+	resp := &usersResponse{
+		Users: []userView{}, Address: s.address(ctx, set), Domain: domain,
+		Xray: s.xrayState(), Sub: service.UnitState(s.Run, sub.Unit),
+	}
 	live := map[int64]xray.UserStats{}
 	if resp.Xray == "active" {
 		list, err := s.Xray.Stats(ctx, false)
@@ -120,7 +157,7 @@ func (s *Server) usersState(ctx context.Context) (*usersResponse, error) {
 		v := userView{
 			ID: u.ID, Name: u.Name, UUID: u.UUID, Devices: u.Devices, Enabled: u.Enabled,
 			Created: u.Created, Up: u.Up, Down: u.Down, SeenAt: u.SeenAt, Online: []xray.Address{},
-			Links: xray.Links(set, resp.Address, u),
+			Subs: sub.LinksFor(domain, pk, u.SubToken), List: []deviceView{},
 		}
 		if resp.Live {
 			if l, ok := live[u.ID]; ok {
@@ -135,6 +172,17 @@ func (s *Server) usersState(ctx context.Context) (*usersResponse, error) {
 			json.Unmarshal([]byte(u.Online), &v.Online)
 		}
 		v.Over = len(v.Online) > u.Devices
+		online := map[string]bool{}
+		for _, a := range v.Online {
+			online[a.IP] = true
+		}
+		for _, d := range byUser[u.ID] {
+			v.List = append(v.List, deviceView{
+				ID: d.ID, Model: d.Model, OS: d.OS, OSVersion: d.OSVersion, App: d.App, IP: d.IP,
+				NoHWID: strings.HasPrefix(d.HWID, "app:"), Online: d.IP != "" && online[d.IP],
+				FirstSeen: d.FirstSeen.Unix(), LastSeen: d.LastSeen.Unix(),
+			})
+		}
 		resp.Users = append(resp.Users, v)
 	}
 	return resp, nil
@@ -224,7 +272,12 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		internalError(w)
 		return
 	}
-	u := &store.User{Name: name, UUID: id, Devices: req.Devices, Enabled: true, Created: s.now().UTC()}
+	token, err := sub.NewToken()
+	if err != nil {
+		internalError(w)
+		return
+	}
+	u := &store.User{Name: name, UUID: id, Devices: req.Devices, Enabled: true, Created: s.now().UTC(), SubToken: token}
 	if err := s.store.AddUser(ctx, u); errors.Is(err, store.ErrExists) {
 		badRequest(w, "пользователь с таким именем уже есть")
 		return
@@ -239,8 +292,9 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	s.respondUsers(w, ctx, warning)
 }
 
-// handleUserUpdate changes a user: name, device limit, on/off, a new key
-// (which cuts off every device that had the old links) or zero traffic.
+// handleUserUpdate changes a user: name, device limit, on/off, new links
+// (a new key and subscription address, which cut off every device that had
+// the old ones) or zero traffic.
 func (s *Server) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 	if !s.authed(w, r, true) {
 		return
@@ -285,7 +339,10 @@ func (s *Server) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		u.Enabled = *req.Enabled
 	}
 	if req.Reissue {
-		if u.UUID, err = newUUID(); err != nil {
+		if u.UUID, err = newUUID(); err == nil {
+			u.SubToken, err = sub.NewToken()
+		}
+		if err != nil {
 			internalError(w)
 			return
 		}
@@ -296,6 +353,13 @@ func (s *Server) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 	} else if err != nil {
 		internalError(w)
 		return
+	}
+	if req.Reissue {
+		// The devices had the old address; each takes its place again with the new one.
+		if err := s.store.ClearDevices(ctx, u.ID); err != nil {
+			internalError(w)
+			return
+		}
 	}
 	if req.ResetTraffic {
 		if err := s.store.ResetTraffic(ctx, u.ID); err != nil {
@@ -356,7 +420,8 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	s.respondUsers(w, ctx, warning)
 }
 
-// handleUserQR draws one link of a user as an SVG QR code.
+// handleUserQR draws a subscription link of a user (kind tigersb or https)
+// as an SVG QR code.
 func (s *Server) handleUserQR(w http.ResponseWriter, r *http.Request) {
 	if !s.authed(w, r, false) {
 		return
@@ -368,22 +433,54 @@ func (s *Server) handleUserQR(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	set, err := xray.Load(ctx, s.store)
+	domain, err := s.domain(ctx)
 	if err != nil {
 		internalError(w)
 		return
 	}
-	for _, l := range xray.Links(set, s.address(ctx, set), *u) {
-		if l.Protocol == r.URL.Query().Get("p") {
-			svg, err := qrSVG(l.URL)
-			if err != nil {
-				internalError(w)
-				return
-			}
-			w.Header().Set("Content-Type", "image/svg+xml")
-			w.Write(svg)
-			return
-		}
+	pk, err := sub.PublicKey(ctx, s.store)
+	if err != nil {
+		internalError(w)
+		return
 	}
-	http.NotFound(w, r)
+	links := sub.LinksFor(domain, pk, u.SubToken)
+	if links == nil {
+		http.NotFound(w, r)
+		return
+	}
+	text := links.HTTPS
+	if r.URL.Query().Get("kind") == "tigersb" {
+		text = links.TigerSB
+	}
+	svg, err := qrSVG(text)
+	if err != nil {
+		internalError(w)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Write(svg)
+}
+
+// handleDeviceDelete forgets a device of a user, freeing its place. The
+// device gets it back on its next subscription update while there is room.
+func (s *Server) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(w, r, true) {
+		return
+	}
+	var req struct {
+		UserID int64 `json:"user_id"`
+		ID     int64 `json:"id"`
+	}
+	if !decode(w, r, maxBody, &req) {
+		return
+	}
+	ctx := r.Context()
+	if err := s.store.DeleteDevice(ctx, req.UserID, req.ID); errors.Is(err, store.ErrNotFound) {
+		badRequest(w, "устройство не найдено")
+		return
+	} else if err != nil {
+		internalError(w)
+		return
+	}
+	s.respondUsers(w, ctx, "")
 }

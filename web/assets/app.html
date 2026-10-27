@@ -72,7 +72,7 @@
         </label>
         <button type="submit" id="user-add">Добавить</button>
       </form>
-      <p class="hint">Пользователь сразу получает все протоколы. Ссылки и QR-коды появятся в списке ниже.</p>
+      <p class="hint">Пользователь сразу получает все протоколы через свою подписку. Ключ TigerSB, подписка https и их QR-коды появятся в списке ниже.</p>
       <p id="users-msg" class="notice" hidden></p>
     </div>
     <div class="glass">
@@ -80,12 +80,13 @@
         <h2>Пользователи <span class="faint" id="users-count"></span></h2>
         <div class="row">
           <span id="users-xray" class="pill off">Xray: проверяю…</span>
+          <span id="users-sub" class="pill off">Подписки: проверяю…</span>
           <button id="users-refresh" class="ghost" type="button">Обновить</button>
         </div>
       </div>
       <input id="users-filter" class="filter" placeholder="Найти по имени" autocomplete="off" hidden>
       <ul class="users" id="users"></ul>
-      <p class="hint" id="users-hint">Устройство считается по IP-адресу, с которого оно подключено: два телефона за одним роутером будут одним устройством, а телефон, перешедший с Wi-Fi на мобильную сеть, пару минут будет числиться дважды. Сейчас панель показывает превышение, а не отключает лишние устройства: жёсткий лимит появится вместе с подписками tigersb:// и привязкой устройств.</p>
+      <p class="hint" id="users-hint">Устройства считаются по подписке: приложение присылает свой HWID, и сверх лимита подписка новому устройству не выдаётся. Приложения без HWID считаются по одному устройству на приложение. «Удалить» освобождает место. «Новые ссылки» отключают все устройства сразу. Число подключённых к VPN адресов показано отдельно: два телефона за одним роутером дают один адрес.</p>
     </div>
   </section>
 
@@ -253,6 +254,7 @@
         <tr><td>Docker (docker.io)</td><td>Apache-2.0</td><td>запуск контейнера Xray; пакет из репозитория дистрибутива</td></tr>
         <tr><td>Caddy 2.11.4</td><td>Apache-2.0</td><td>веб-сервер заглушки и сертификаты; официальная сборка без изменений, текст лицензии в /usr/local/lib/tigersb/caddy.LICENSE</td></tr>
         <tr><td>rsc.io/qr</td><td>BSD-3-Clause</td><td>QR-коды ссылок</td></tr>
+        <tr><td>TigerSB-client pkg/profile</td><td>GPL-3.0</td><td>формат профиля, ключ tigersb:// и подпись подписок; тот же автор</td></tr>
         <tr><td>modernc.org/sqlite, libc, mathutil, memory</td><td>BSD-3-Clause</td><td>база данных панели</td></tr>
         <tr><td>golang.org/x/crypto, x/sys, x/term</td><td>BSD-3-Clause</td><td>Argon2id, ввод пароля</td></tr>
         <tr><td>github.com/google/uuid, remyoudompheng/bigfft</td><td>BSD-3-Clause</td><td>зависимости SQLite</td></tr>

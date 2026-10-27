@@ -300,7 +300,7 @@ func TestClosePanel(t *testing.T) {
 	if w := do(s, http.MethodPost, "/"+secret+"/api/panel/close", "{}", c); w.Code != http.StatusNoContent {
 		t.Fatalf("close: %d %s", w.Code, w.Body.String())
 	}
-	if conf, _ := os.ReadFile(s.Site.Caddyfile()); strings.Contains(string(conf), "reverse_proxy") {
+	if conf, _ := os.ReadFile(s.Site.Caddyfile()); strings.Contains(string(conf), "@tigersb") {
 		t.Fatalf("closed panel is still routed:\n%s", conf)
 	}
 	if open, err := site.PanelOpen(context.Background(), s.store); err != nil || open {

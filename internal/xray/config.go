@@ -141,7 +141,8 @@ func Routes(s Settings, domain string) edge.Routes {
 	r := edge.Routes{SNI: map[string]edge.Backend{}}
 	loop := func(port int) string { return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) }
 	if domain != "" {
-		caddy := edge.Backend{Addr: loop(TLSPort)}
+		// Caddy reads the PROXY header, so subscriptions see the device's address.
+		caddy := edge.Backend{Addr: loop(TLSPort), Proxy: true}
 		r.SNI[domain] = caddy
 		r.Default = &caddy
 	}

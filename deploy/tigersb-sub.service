@@ -1,0 +1,33 @@
+[Unit]
+Description=TigerSB subscriptions (served to Caddy on 127.0.0.1:10086)
+Documentation=https://github.com/Stilltiger45/TigerSB-panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs apart from the panel: subscriptions and the device limit keep working
+# while the panel sleeps.
+ExecStart=/usr/local/bin/tigersb sub --config /etc/tigersb/config.json
+Restart=always
+RestartSec=2s
+
+# Reads the database and records devices; needs no privileges.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+LockPersonality=yes
+ReadWritePaths=/var/lib/tigersb
+ReadOnlyPaths=/etc/tigersb
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
