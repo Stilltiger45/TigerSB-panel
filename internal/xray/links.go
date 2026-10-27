@@ -7,15 +7,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Stilltiger45/TigerSB-panel/internal/core"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 )
 
 // Link is one ready-to-import connection of a user.
-type Link struct {
-	Protocol string `json:"protocol"` // grpc or xhttp
-	Title    string `json:"title"`
-	URL      string `json:"url"`
-}
+type Link = core.Link
 
 // PublicAddress picks the address for links: the admin's choice, else the
 // first public IP of the server, else the panel's domain.

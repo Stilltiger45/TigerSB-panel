@@ -26,6 +26,8 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-client/pkg/profile"
 
+	"github.com/Stilltiger45/TigerSB-panel/internal/core"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
@@ -108,20 +110,20 @@ func LinksFor(domain, pk, token string) *Links {
 	return &Links{TigerSB: profile.Scheme + "://add?" + k.Encode(), HTTPS: URL(domain, token)}
 }
 
+// prio orders the transports for the client: XHTTP first, then gRPC, then
+// TUIC, whose UDP some networks block.
+var prio = map[string]int{xray.XHTTPTag: 10, xray.GRPCTag: 20, singbox.TUICTag: 30}
+
 // Profile builds the signed profile of a user: one exit (this server) with
-// every enabled protocol, XHTTP first.
-func Profile(priv ed25519.PrivateKey, links []xray.Link, domain, token string, now time.Time) ([]byte, error) {
+// every enabled protocol of every core.
+func Profile(priv ed25519.PrivateKey, links []core.Link, domain, token string, now time.Time) ([]byte, error) {
 	exit := profile.Exit{ID: "main", Role: profile.RoleForeign}
 	for _, l := range links {
 		out, _, err := profile.ParseLink(l.URL)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", l.Protocol, err)
 		}
-		prio := 20
-		if l.Protocol == xray.XHTTPTag {
-			prio = 10
-		}
-		exit.Transports = append(exit.Transports, profile.Transport{ID: l.Protocol, Prio: prio, Name: l.Title, Xray: out})
+		exit.Transports = append(exit.Transports, profile.Transport{ID: l.Protocol, Prio: prio[l.Protocol], Name: l.Title, Xray: out})
 	}
 	if len(exit.Transports) == 0 {
 		return nil, errors.New("нет включённых протоколов")
@@ -146,7 +148,7 @@ func Profile(priv ed25519.PrivateKey, links []xray.Link, domain, token string, n
 }
 
 // Plain is the subscription for other clients: the links, base64 encoded.
-func Plain(links []xray.Link) []byte {
+func Plain(links []core.Link) []byte {
 	var lines []string
 	for _, l := range links {
 		lines = append(lines, l.URL)
@@ -165,6 +167,9 @@ type Handler struct {
 	Domain func(ctx context.Context) (string, error)
 	// LocalIPs lists this server's addresses for the links (xray.LocalIPs).
 	LocalIPs func() ([]net.IP, error)
+	// TUICCert reports whether sing-box has the certificate TUIC needs
+	// (singbox.Runtime.HaveCert); nil means it has not.
+	TUICCert func() bool
 	Now      func() time.Time
 }
 
@@ -290,7 +295,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.LocalIPs != nil {
 		ips, _ = h.LocalIPs()
 	}
-	links := xray.Links(set, xray.PublicAddress(set, ips, domain), *u)
+	addr := xray.PublicAddress(set, ips, domain)
+	links := xray.Links(set, addr, *u)
+	if sb, err := singbox.Load(ctx, h.Store); err != nil {
+		log.Printf("sub: %v", err)
+	} else {
+		links = append(links, singbox.Links(sb, addr, domain, h.TUICCert != nil && h.TUICCert(), *u)...)
+	}
 	if !IsTigerSB(ua) {
 		hdr.Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write(Plain(links))

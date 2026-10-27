@@ -1,0 +1,25 @@
+[Unit]
+Description=TigerSB sing-box (Docker)
+Documentation=https://github.com/Stilltiger45/TigerSB-panel
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Writes the config and the certificate copy from the database and Caddy's
+# storage, then becomes `docker run` of the pinned sing-box image with the
+# host network.
+ExecStart=/usr/local/bin/tigersb singbox run --config /etc/tigersb/config.json
+ExecStop=/usr/local/bin/tigersb singbox stop --config /etc/tigersb/config.json
+# sing-box rereads its config and certificate on SIGHUP.
+ExecReload=/usr/local/bin/tigersb singbox reload --config /etc/tigersb/config.json
+Environment=DOCKER_CONFIG=/var/lib/tigersb/docker
+Restart=always
+RestartSec=5s
+# The first start may pull the image.
+TimeoutStartSec=5min
+TimeoutStopSec=20s
+
+[Install]
+WantedBy=multi-user.target

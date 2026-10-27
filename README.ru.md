@@ -10,8 +10,9 @@
 
 <p align="center">
   <a href="https://github.com/XTLS/Xray-core"><img alt="Xray-core 26.9.30" src="https://img.shields.io/badge/Xray--core-26.9.30-FF8A1F?style=for-the-badge&labelColor=1c1c1c"></a>
+  <a href="https://github.com/SagerNet/sing-box"><img alt="sing-box 1.14.4" src="https://img.shields.io/badge/sing--box-1.14.4-FF8A1F?style=for-the-badge&labelColor=1c1c1c"></a>
   <a href="https://caddyserver.com"><img alt="Caddy 2.11.4" src="https://img.shields.io/badge/Caddy-2.11.4-FF8A1F?style=for-the-badge&logo=caddy&logoColor=white&labelColor=1c1c1c"></a>
-  <img alt="Docker" src="https://img.shields.io/badge/Docker-Xray-FF8A1F?style=for-the-badge&logo=docker&logoColor=white&labelColor=1c1c1c">
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-2%20cores-FF8A1F?style=for-the-badge&logo=docker&logoColor=white&labelColor=1c1c1c">
 </p>
 
 <p align="center">
@@ -26,9 +27,9 @@
 
 ---
 
-**TigerSB-panel** — своя VPN-панель на Xray, которая ставится одной командой. Добавляете человека, отправляете ему ключ или QR-код, и он подключён. Снаружи сервер выглядит как обычный сайт на техобслуживании.
+**TigerSB-panel** — своя VPN-панель на Xray и sing-box, которая ставится одной командой. Добавляете человека, отправляете ему ключ или QR-код, и он подключён. Снаружи сервер выглядит как обычный сайт на техобслуживании.
 
-Работает в паре с приложением [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client), а обычные подписки `https://` понимают v2rayNG, Hiddify, Happ, Streisand и другие клиенты на Xray.
+Работает в паре с приложением [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client), а обычные подписки `https://` понимают v2rayNG, Hiddify, Happ, Streisand и другие клиенты на Xray и sing-box.
 
 <p align="center">
   <img src="docs/assets/screens.jpg" alt="Вкладки панели: «Обзор», «Пользователи», «Контроль» и «Протоколы»" width="100%">
@@ -38,24 +39,25 @@
 
 ## Возможности
 
-- **Установка одной командой.** Установщик ставит панель, Caddy и Xray, получает сертификат Let's Encrypt и показывает адрес панели. Повторный запуск ничего не ломает.
+- **Установка одной командой.** Установщик ставит панель, Caddy, Xray и sing-box, получает сертификат Let's Encrypt и показывает адрес панели. Повторный запуск ничего не ломает.
 - **Панель спрятана.** Она открывается только по секретному пути на вашем домене, а на любой другой адрес сайт показывает безобидную заглушку «Технические работы» (четыре шаблона: выпечка, фотоблог, дача, книги). `tigersb close` прячет и сам секретный путь, а открыть его снова можно только по SSH.
 - **Пользователи в два клика.** Имя и число устройств. Каждый получает ключ `tigersb://` и подписку `https://`, обе с QR-кодом. Новый пользователь подключается без перезапуска Xray, остальных не выкидывает.
 - **Лимит устройств.** Устройство учитывается по HWID при скачивании подписки, сверх лимита подписка не выдаётся. В списке видно модель, систему, приложение, IP и время последнего обновления, лишнее устройство удаляется кнопкой.
-- **Протоколы.** VLESS + REALITY через XHTTP и gRPC. Порт 443 общий у сайта и протоколов: сервер различает подключения по SNI. Все поля REALITY и транспорта меняются в панели, а конфиг проверяется в Xray до применения. Сканер подбирает SNI среди соседей сервера.
+- **Три протокола в двух контейнерах.** Xray держит VLESS + REALITY через XHTTP и gRPC; порт 443 общий у сайта и протоколов, сервер различает подключения по SNI. sing-box держит TUIC v5 (QUIC по UDP 8443) с настоящим сертификатом Let's Encrypt сайта. В карточке протокола виден только порт, остальное свёрнуто под «Все настройки», и любое поле можно поменять. Конфиг проверяется в ядре до применения. Сканер подбирает SNI для REALITY среди соседей сервера. Новый протокол добавляется в то ядро, которое его поддерживает.
 - **Защищённые подписки.** Профиль для TigerSB подписан ключом Ed25519, подменить серверы по дороге нельзя. Неверный токен отдаёт ту же заглушку с теми же заголовками, что и любая страница сайта. Подписки работают, даже когда панель закрыта или спит.
 - **Контроль сервера.** Графики процессора, памяти, диска и сети за 6 часов, сутки или неделю. Проверка служб, сертификата, домена, места, часов и базы с подсказкой, что делать.
 - **Обновление кнопкой.** Перед обновлением создаётся точка восстановления, а если новая версия не запустилась, панель возвращается к ней сама и пишет причину.
 
-Скоро: каскад через точку маршрутизации в России, XHTTP через Yandex Cloud CDN, TUIC (sing-box) напрямую и через каскад.
+Скоро: каскад через точку маршрутизации в России (gRPC и TUIC), XHTTP через Yandex Cloud CDN.
 
 ## Компоненты
 
 | Компонент | Роль | Лицензия |
 |---|---|---|
 | [Xray-core](https://github.com/XTLS/Xray-core) 26.9.30 | VPN-ядро: VLESS + REALITY, XHTTP, gRPC. Официальный образ в Docker, закреплён по хешу | MPL-2.0 |
+| [sing-box](https://github.com/SagerNet/sing-box) 1.14.4 | второе VPN-ядро: TUIC v5. Официальный образ в Docker, закреплён по хешу | GPL-3.0-or-later |
 | [Caddy](https://caddyserver.com) 2.11.4 | сайт-заглушка, сертификат Let's Encrypt, вход в панель и подписки | Apache-2.0 |
-| [Docker](https://www.docker.com) | запуск Xray без прав и с файловой системой только для чтения | Apache-2.0 |
+| [Docker](https://www.docker.com) | запуск Xray и sing-box без прав и с файловой системой только для чтения | Apache-2.0 |
 | [Go](https://go.dev) 1.26 | панель, служба порта 443, служба подписок, сбор данных | BSD-3-Clause |
 | [SQLite](https://sqlite.org) (modernc, без cgo) | пользователи, устройства, настройки, графики | BSD-3-Clause |
 | [pkg/profile](https://github.com/Stilltiger45/TigerSB-client/tree/main/pkg/profile) из TigerSB-client | формат и подпись профиля TigerSB | GPL-3.0 |
@@ -76,7 +78,7 @@ curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scr
 
 В конце он покажет адрес панели вида `https://<домен>/<секретный путь>/`, его нужно сохранить. Забыли адрес — `tigersb info` на сервере. Сборка из исходников занимает пару минут.
 
-Если у хостинга свой файрвол, откройте в нём порты 443 и 8443 (TCP).
+Если у хостинга свой файрвол, откройте в нём порты 443 и 8443 для TCP и 8443 для UDP (TUIC).
 
 ## Первые шаги
 
@@ -115,6 +117,8 @@ curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scr
 | `tigersb restore apply <имя>` | вернуть точку восстановления |
 | `tigersb xray status` | состояние Xray и порта 443, протоколы и число пользователей |
 | `tigersb xray apply` | заново собрать конфиг Xray из базы, проверить и перезапустить |
+| `tigersb singbox status` | состояние sing-box и порт TUIC |
+| `tigersb singbox apply` | заново собрать конфиг sing-box и копию сертификата, проверить и перезапустить |
 | `tigersb monitor` | снять показатели и проверить сервер сейчас (обычно это делает таймер) |
 
 ## Документация

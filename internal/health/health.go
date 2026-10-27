@@ -2,8 +2,8 @@
 // maintenance page, the certificate, the panel route, disk, memory, clock,
 // internet access, the database, monitoring, updates and restore points.
 //
-// Each later stage (sing-box, routing points) adds its own checks here;
-// until then they are listed as coming.
+// Each later stage (routing points) adds its own checks here; until then
+// they are listed as coming.
 package health
 
 import (
@@ -14,12 +14,16 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
 	"github.com/Stilltiger45/TigerSB-panel/internal/metrics"
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
@@ -67,7 +71,11 @@ type Env struct {
 	LocalIPs  func() ([]net.IP, error)
 	Internet  string // host:port that must be reachable, github.com:443
 	Listening func(port int) bool
-	Now       time.Time
+	// ListeningUDP reports whether a UDP socket is bound to the port.
+	ListeningUDP func(port int) bool
+	// TUICCert reports whether sing-box has the domain's certificate.
+	TUICCert func() bool
+	Now      time.Time
 }
 
 func (e *Env) defaults() {
@@ -93,6 +101,14 @@ func (e *Env) defaults() {
 	}
 	if e.Listening == nil {
 		e.Listening = listening
+	}
+	if e.ListeningUDP == nil {
+		e.ListeningUDP = listeningUDP
+	}
+	if e.TUICCert == nil {
+		e.TUICCert = func() bool {
+			return e.Cfg != nil && singbox.DefaultRuntime(filepath.Dir(e.Cfg.DBPath)).HaveCert()
+		}
 	}
 	if e.Now.IsZero() {
 		e.Now = time.Now()
@@ -133,7 +149,7 @@ func Run(ctx context.Context, e Env) (*Report, error) {
 	add(checkEdge(e))
 	add(checkSub(e, set))
 	add(checkXray(ctx, e))
-	add(Result{ID: "singbox", Title: "sing-box (TUIC)", State: Soon, Detail: "Появится вместе с TUIC."})
+	add(checkSingbox(ctx, e, set))
 	add(Result{ID: "routers", Title: "Точки маршрутизации", State: Soon, Detail: "Появятся вместе с каскадом: панель будет проверять каждую по SSH."})
 
 	r.State = OK
@@ -181,6 +197,51 @@ func listening(port int) bool {
 	}
 	c.Close()
 	return true
+}
+
+// listeningUDP looks for a UDP socket on the port in /proc/net/udp and udp6,
+// since a UDP port cannot be probed by connecting.
+func listeningUDP(port int) bool {
+	want := fmt.Sprintf(":%04X", port)
+	for _, name := range []string{"/proc/net/udp", "/proc/net/udp6"} {
+		b, err := os.ReadFile(name)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n")[1:] {
+			f := strings.Fields(line)
+			if len(f) > 1 && strings.HasSuffix(f[1], want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func checkSingbox(ctx context.Context, e Env, set site.Settings) Result {
+	r := Result{ID: "singbox", Title: "sing-box (TUIC)"}
+	sb, err := singbox.Load(ctx, e.Store)
+	if err != nil {
+		r.State, r.Detail = Fail, err.Error()
+		return r
+	}
+	state := service.UnitState(e.Run, singbox.Unit)
+	port := strconv.Itoa(sb.TUIC.Port)
+	switch {
+	case state != "active":
+		r.State, r.Detail = Fail, fmt.Sprintf("Контейнер не работает (%s): TUIC недоступен. Подробности: journalctl -u %s", state, singbox.Unit)
+	case !sb.TUIC.Enabled:
+		r.State, r.Detail = Off, "Работает, TUIC выключен."
+	case set.Domain == "":
+		r.State, r.Detail = Warn, "TUIC ждёт домен: задайте его на вкладке «Сайт и сертификат»."
+	case !e.TUICCert():
+		r.State, r.Detail = Warn, "TUIC ждёт сертификат домена: Caddy ещё не получил его."
+	case !e.ListeningUDP(sb.TUIC.Port):
+		r.State, r.Detail = Fail, "Не слушает UDP "+port+". Подробности: journalctl -u "+singbox.Unit
+	default:
+		r.State, r.Detail = OK, "Работает: TUIC :"+port+"/udp. Порт должен быть открыт для UDP в файрволе и у хостера."
+	}
+	return r
 }
 
 func checkXray(ctx context.Context, e Env) Result {

@@ -1,19 +1,18 @@
 package xray
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Stilltiger45/TigerSB-panel/internal/core"
 	"github.com/Stilltiger45/TigerSB-panel/internal/edge"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 )
@@ -36,18 +35,13 @@ const containerUID = 65532
 // mountDir is where the config directory appears inside the container.
 const mountDir = "/etc/tigersb-xray"
 
-// Exec runs a command with optional stdin and returns its combined output.
-type Exec func(ctx context.Context, stdin []byte, name string, args ...string) (string, error)
+// Exec, RealExec and ErrNoDocker are shared by every core.
+type Exec = core.Exec
 
-// RealExec runs real commands.
-func RealExec(ctx context.Context, stdin []byte, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
-}
+var (
+	RealExec    = core.RealExec
+	ErrNoDocker = core.ErrNoDocker
+)
 
 // Runtime is the Xray container and the edge router on this server.
 type Runtime struct {
@@ -106,26 +100,11 @@ func (r *Runtime) Write(conf []byte, routes edge.Routes) error {
 	return edge.Write(r.Routes, routes)
 }
 
-// ErrNoDocker means Docker is not installed or not running.
-var ErrNoDocker = errors.New("Docker не установлен или не запущен: переустановите панель (install.sh --update) или запустите systemctl start docker")
-
 func (r *Runtime) docker(ctx context.Context, stdin []byte, args ...string) (string, error) {
-	out, err := r.Exec(ctx, stdin, "docker", args...)
-	var notFound *exec.Error
-	if errors.As(err, &notFound) || strings.Contains(out, "Cannot connect to the Docker daemon") {
-		return out, ErrNoDocker
-	}
-	return out, err
+	return core.Docker(ctx, r.Exec, stdin, args...)
 }
 
-// tail keeps the last lines of tool output for an error message.
-func tail(out string, n int) string {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
-}
+func tail(out string, n int) string { return core.Tail(out, n) }
 
 // Test asks Xray in a throwaway container whether it accepts conf.
 func (r *Runtime) Test(ctx context.Context, conf []byte) error {

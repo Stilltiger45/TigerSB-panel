@@ -224,7 +224,7 @@ main_sha() {
 	fi
 }
 
-UNITS="tigersb.service tigersb-caddy.service tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-monitor.service tigersb-monitor.timer tigersb-update.service"
+UNITS="tigersb.service tigersb-caddy.service tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-singbox.service tigersb-monitor.service tigersb-monitor.timer tigersb-update.service"
 
 install_unit() {
 	local src name
@@ -250,7 +250,7 @@ start_monitor() {
 }
 
 # check_ports stops a fresh install when another web server holds 80 or 443,
-# and warns when the default gRPC port is taken.
+# and warns when the default gRPC (TCP) or TUIC (UDP) port is taken.
 check_ports() {
 	command -v ss >/dev/null || return 0
 	local port who
@@ -260,9 +260,11 @@ check_ports() {
 	done
 	who="$(ss -ltnpH "sport = :8443" 2>/dev/null | grep -v '"xray"' | head -n1 || true)"
 	[ -z "$who" ] || echo "Внимание: порт 8443 занят ($who). Поменяйте порт gRPC на вкладке «Протоколы»." >&2
+	who="$(ss -lunpH "sport = :8443" 2>/dev/null | grep -v '"sing-box"' | head -n1 || true)"
+	[ -z "$who" ] || echo "Внимание: порт 8443/udp занят ($who). Поменяйте порт TUIC на вкладке «Протоколы»." >&2
 }
 
-# install_docker makes sure Docker runs: Xray lives in a container. It prints
+# install_docker makes sure Docker runs: Xray and sing-box live in containers. It prints
 # nothing and returns 1 when Docker cannot be installed here.
 install_docker() {
 	if ! command -v docker >/dev/null; then
@@ -280,19 +282,21 @@ install_docker() {
 	systemctl enable --now docker.service >&2 || return 1
 }
 
-# start_vpn starts the edge router on 443, the subscriptions and Xray in
-# Docker. Run it after start_site: with a domain Caddy moves to
+# start_vpn starts the edge router on 443, the subscriptions, and Xray and
+# sing-box in Docker. Run it after start_site: with a domain Caddy moves to
 # 127.0.0.1:8444, frees 443 and already reads the edge's PROXY header.
 start_vpn() {
-	install -d -m 0700 "$DATA_DIR/edge" "$DATA_DIR/docker"
-	systemctl enable tigersb-edge.service tigersb-sub.service tigersb-xray.service
+	install -d -m 0700 "$DATA_DIR/edge" "$DATA_DIR/docker" "$DATA_DIR/singbox"
+	systemctl enable tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-singbox.service
 	systemctl restart tigersb-edge.service tigersb-sub.service
 	if install_docker; then
-		local image
-		image="$("$BIN" xray image)"
-		echo "Скачиваю образ Xray ($image)..."
-		docker pull -q "$image" >/dev/null || echo "Образ не скачался, Xray попробует ещё раз при запуске." >&2
-		systemctl restart tigersb-xray.service
+		local image core
+		for core in xray singbox; do
+			image="$("$BIN" "$core" image)"
+			echo "Скачиваю образ $core ($image)..."
+			docker pull -q "$image" >/dev/null || echo "Образ не скачался, $core попробует ещё раз при запуске." >&2
+		done
+		systemctl restart tigersb-xray.service tigersb-singbox.service
 	fi
 }
 

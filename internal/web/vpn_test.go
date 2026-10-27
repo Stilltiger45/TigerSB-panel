@@ -15,6 +15,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-client/pkg/profile"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/edge"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
@@ -38,6 +39,11 @@ func (f *fakeXray) exec(_ context.Context, stdin []byte, name string, args ...st
 		f.stdin = append(f.stdin, string(stdin))
 	}
 	switch {
+	case strings.Contains(line, " check -c "):
+		if f.test != nil {
+			return "FATAL " + f.test.Error(), errors.New("exit 1")
+		}
+		return "", nil
 	case strings.Contains(line, " run -test "):
 		if f.test != nil {
 			return "Failed to start: " + f.test.Error(), errors.New("exit 23")
@@ -69,6 +75,7 @@ func vpnServer(t *testing.T) (*Server, *fakeXray, *http.Cookie) {
 	s := newTestServer(t)
 	f := &fakeXray{}
 	s.Xray.Exec = f.exec
+	s.Singbox.Exec = f.exec
 	s.Run = func(name string, args ...string) (string, error) {
 		if name == "systemctl" && args[0] == "is-active" {
 			return "active", nil
@@ -308,5 +315,52 @@ func TestProtocolKeys(t *testing.T) {
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &k); err != nil || len(k.Private) != 43 || len(k.Public) != 43 || len(k.IDs) != 1 {
 		t.Fatalf("keys: %s", w.Body)
+	}
+}
+
+// TUIC is saved apart from Xray: only sing-box is checked and reloaded, and
+// the password secret never leaves the server.
+func TestProtocolsSaveTUIC(t *testing.T) {
+	s, f, c := vpnServer(t)
+	w := do(s, http.MethodGet, "/"+secret+"/api/protocols", "", c)
+	var p protocolsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Singbox.TUIC.Enabled || p.Singbox.TUIC.Port != 8443 || p.Singbox.Secret != "" || strings.Contains(w.Body.String(), `"secret"`) {
+		t.Fatalf("get: %s", w.Body)
+	}
+	stored, _ := singbox.Load(context.Background(), s.store)
+
+	sb := p.Singbox
+	sb.TUIC.Port = 9443
+	sb.TUIC.CongestionControl = "cubic"
+	sb.Secret = "attacker-chosen-secret-attacker-chosen-secret"
+	body, _ := json.Marshal(map[string]any{"address": p.Settings.Address, "grpc": p.Settings.GRPC, "xhttp": p.Settings.XHTTP, "singbox": sb})
+	w = do(s, http.MethodPost, "/"+secret+"/api/protocols", string(body), c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body)
+	}
+	var got protocolsResponse
+	json.Unmarshal(w.Body.Bytes(), &got)
+	joined := f.joined()
+	if !strings.Contains(joined, "singbox:test check -c /etc/tigersb-singbox/test.json") || !strings.Contains(joined, "systemctl try-reload-or-restart tigersb-singbox.service") {
+		t.Fatalf("sing-box not checked and reloaded:\n%s", joined)
+	}
+	if strings.Contains(joined, "tigersb-xray.service") || strings.Contains(joined, " run -test ") {
+		t.Fatalf("a TUIC change touched Xray:\n%s", joined)
+	}
+	if got.Singbox.TUIC.Port != 9443 || got.Applied != "sing-box перечитал настройки" {
+		t.Fatalf("response: %s", w.Body)
+	}
+	after, _ := singbox.Load(context.Background(), s.store)
+	if after.Secret != stored.Secret || after.TUIC.CongestionControl != "cubic" {
+		t.Fatalf("stored: %+v", after)
+	}
+
+	sb.TUIC.CongestionControl = "brutal"
+	body, _ = json.Marshal(map[string]any{"address": p.Settings.Address, "grpc": p.Settings.GRPC, "xhttp": p.Settings.XHTTP, "singbox": sb})
+	if w := do(s, http.MethodPost, "/"+secret+"/api/protocols", string(body), c); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad TUIC: %d %s", w.Code, w.Body)
 	}
 }

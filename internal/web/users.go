@@ -198,11 +198,20 @@ func (s *Server) sync(ctx context.Context) error {
 	return s.Xray.Sync(ctx, s.store, domain, false)
 }
 
-// live applies a user change to the running Xray; a stopped Xray reads the
-// new config when it starts, so only a running one is told.
+// live applies a user change to the running cores. Xray takes it without a
+// restart; sing-box has no such API and rereads its config, which stalls
+// TUIC clients for up to 12 s (see singbox.Render). A stopped core reads
+// the new config when it starts, so only a running one is told.
 func (s *Server) live(ctx context.Context, f func(xray.Settings) error) string {
+	warning := ""
+	if domain, err := s.domain(ctx); err != nil {
+		log.Printf("sing-box live change: %v", err)
+	} else if err := s.Singbox.Sync(ctx, s.store, domain, true); err != nil {
+		log.Printf("sing-box live change: %v", err)
+		warning = "Изменение сохранено, но " + err.Error() + "."
+	}
 	if s.xrayState() != "active" {
-		return ""
+		return warning
 	}
 	set, err := xray.Load(ctx, s.store)
 	if err == nil {
@@ -212,7 +221,7 @@ func (s *Server) live(ctx context.Context, f func(xray.Settings) error) string {
 		log.Printf("xray live change: %v", err)
 		return "Изменение сохранено, но Xray его не принял на лету: " + err.Error() + ". Оно вступит в силу после перезапуска Xray."
 	}
-	return ""
+	return warning
 }
 
 func (s *Server) respondUsers(w http.ResponseWriter, ctx context.Context, warning string) {
