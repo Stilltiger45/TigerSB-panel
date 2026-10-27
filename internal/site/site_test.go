@@ -69,6 +69,7 @@ func TestCaddyfile(t *testing.T) {
 		"alt_tlsalpn_port 8444",
 		"https_port 8444",
 		"default_bind 127.0.0.1",
+		"header Cache-Control no-cache",
 		"root * /d/www",
 		"try_files {path} /index.html",
 		"-Server",
@@ -225,7 +226,9 @@ func TestCaddyfilePanelRoute(t *testing.T) {
 	for _, want := range []string{
 		"@tigersb path /0123456789abcdef0123456789abcdef /0123456789abcdef0123456789abcdef/*",
 		"handle @tigersb {\n\t\treverse_proxy 127.0.0.1:34567\n\t}",
-		"\thandle {\n\t\troot * /d/www",
+		// The stub must not stay in the browser cache, or the secret path
+		// shows it after open; the panel sets its own no-store.
+		"\thandle {\n\t\theader Cache-Control no-cache\n\t\troot * /d/www",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Caddyfile lacks %q:\n%s", want, got)

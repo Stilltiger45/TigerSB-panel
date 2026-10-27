@@ -271,6 +271,9 @@ func RenderCaddyfile(s Settings, p Paths, r *Route) string {
 		b.WriteString("\thandle {\n")
 		stub = "\t\t"
 	}
+	// Without this the browser keeps the stub for a tenth of its age, so
+	// after a long close the secret path shows the stub even after open.
+	fmt.Fprintf(&b, "%sheader Cache-Control no-cache\n", stub)
 	fmt.Fprintf(&b, "%sroot * %s\n", stub, p.WWW)
 	fmt.Fprintf(&b, "%stry_files {path} /index.html\n%sfile_server\n", stub, stub)
 	if stub != "\t" {
