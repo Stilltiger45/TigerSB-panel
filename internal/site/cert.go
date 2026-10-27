@@ -22,7 +22,7 @@ type CertStatus struct {
 	State    string    `json:"state"`
 	Issuer   string    `json:"issuer,omitempty"`
 	NotAfter time.Time `json:"not_after,omitzero"`
-	DaysLeft int       `json:"days_left,omitempty"`
+	DaysLeft int       `json:"days_left"`
 	Error    string    `json:"error,omitempty"`
 }
 

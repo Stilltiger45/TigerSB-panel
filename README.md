@@ -1,230 +1,146 @@
-# TigerSB-panel
+<p align="center">
+  <img src="docs/assets/banner.jpg" alt="TigerSB VPN panel" width="100%">
+</p>
 
-Автономная панель для своей VPN-сети на Xray: VLESS через gRPC и XHTTP, каскад по gRPC, XHTTP через Yandex Cloud CDN, TUIC напрямую и через каскад.
+<p align="center">
+  <a href="LICENSE"><img alt="License GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-FF6A00?style=for-the-badge&labelColor=1c1c1c"></a>
+  <a href="https://github.com/Stilltiger45/TigerSB-panel/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Stilltiger45/TigerSB-panel/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=1c1c1c&color=FF6A00"></a>
+  <img alt="Debian 11+ and Ubuntu 20.04+" src="https://img.shields.io/badge/Debian%20%7C%20Ubuntu-amd64%20%7C%20arm64-FF6A00?style=for-the-badge&logo=linux&logoColor=white&labelColor=1c1c1c">
+</p>
 
-Работает в паре с клиентом [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client) для Android и Windows: пользователь вставляет одну уникальную ссылку из панели и подключается.
+<p align="center">
+  <a href="https://github.com/XTLS/Xray-core"><img alt="Xray-core 26.9.30" src="https://img.shields.io/badge/Xray--core-26.9.30-FF8A1F?style=for-the-badge&labelColor=1c1c1c"></a>
+  <a href="https://caddyserver.com"><img alt="Caddy 2.11.4" src="https://img.shields.io/badge/Caddy-2.11.4-FF8A1F?style=for-the-badge&logo=caddy&logoColor=white&labelColor=1c1c1c"></a>
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-Xray-FF8A1F?style=for-the-badge&logo=docker&logoColor=white&labelColor=1c1c1c">
+</p>
 
-Сейчас готовы каркас панели, вход по логину и паролю, установщик с выбором роли, режим сна, заглушка «Технические работы» с автоматическим сертификатом Let's Encrypt, вкладка «Контроль» с ресурсами сервера, проверкой работоспособности, обновлением и точками восстановления, Xray в Docker с протоколами VLESS + REALITY через gRPC и XHTTP, вкладки «Пользователи» и «Протоколы», подписки `tigersb://` и `https://` с лимитом устройств по HWID. Каскад, CDN и TUIC появятся на следующих этапах.
+<p align="center">
+  <img alt="Go 1.26" src="https://img.shields.io/badge/Go-1.26-FFB861?style=for-the-badge&logo=go&logoColor=white&labelColor=1c1c1c">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-no%20cgo-FFB861?style=for-the-badge&logo=sqlite&logoColor=white&labelColor=1c1c1c">
+  <img alt="systemd" src="https://img.shields.io/badge/systemd-services-FFB861?style=for-the-badge&labelColor=1c1c1c">
+</p>
 
-## Быстрый старт
+<p align="center">
+  <a href="README.ru.md">🇷🇺 Русский</a> &nbsp;|&nbsp; 🇬🇧 <b>English</b>
+</p>
 
-На чистом VPS (Debian 11+ или Ubuntu 20.04+ с systemd, amd64 или arm64), от root:
+---
+
+**TigerSB-panel** is a self-hosted VPN panel on Xray that installs with one command. Add a person, send them a key or a QR code, and they are connected. From the outside the server looks like an ordinary website under maintenance.
+
+It is made for the [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client) app, and its plain `https://` subscriptions work in v2rayNG, Hiddify, Happ, Streisand and other Xray clients.
+
+<p align="center">
+  <img src="docs/assets/screens.jpg" alt="Panel tabs: Overview, Users, Control and Protocols" width="100%">
+</p>
+
+<sub>Screenshots from a test server. The panel interface is in Russian.</sub>
+
+## Features
+
+- **One-command install.** The installer sets up the panel, Caddy and Xray, gets a Let's Encrypt certificate and prints the panel address. Running it again breaks nothing.
+- **Hidden panel.** It opens only on a secret path of your domain; every other address shows a harmless "Maintenance" page (four templates: bakery, photo blog, garden diary, book club). `tigersb close` hides the secret path too, and only `tigersb open` over SSH brings it back.
+- **Users in two clicks.** A name and a device count. Each user gets a `tigersb://` key and an `https://` subscription, both with a QR code. New users connect without restarting Xray, so nobody else is dropped.
+- **Device limit.** Devices are counted by HWID when they fetch the subscription, and over the limit no subscription is given out. The list shows model, OS, app, IP and last update, and a button removes a device.
+- **Protocols.** VLESS + REALITY over XHTTP and gRPC. Port 443 is shared by the site and the protocols: the server tells connections apart by SNI. Every REALITY and transport field is editable in the panel, and Xray checks the config before it is applied. A scanner finds SNI candidates among the server's neighbours.
+- **Protected subscriptions.** The TigerSB profile is signed with Ed25519, so nobody on the way can swap the servers. A wrong token returns the same maintenance page with the same headers as any other page of the site. Subscriptions keep working while the panel is closed or asleep.
+- **Server control.** CPU, memory, disk and network charts for 6 hours, a day or a week. Health checks for services, certificate, domain, disk space, clock and database, each with a hint on what to do.
+- **One-button update.** A restore point is made first, and if the new version does not start, the panel rolls back by itself and says why.
+
+Coming next: a cascade through a routing point in Russia, XHTTP through Yandex Cloud CDN, TUIC (sing-box) direct and through the cascade.
+
+## Components
+
+| Component | Role | License |
+|---|---|---|
+| [Xray-core](https://github.com/XTLS/Xray-core) 26.9.30 | VPN core: VLESS + REALITY, XHTTP, gRPC. Official image in Docker, pinned by digest | MPL-2.0 |
+| [Caddy](https://caddyserver.com) 2.11.4 | maintenance site, Let's Encrypt certificate, panel and subscription routes | Apache-2.0 |
+| [Docker](https://www.docker.com) | runs Xray without privileges on a read-only file system | Apache-2.0 |
+| [Go](https://go.dev) 1.26 | the panel, the port 443 splitter, the subscription service, metrics | BSD-3-Clause |
+| [SQLite](https://sqlite.org) (modernc, no cgo) | users, devices, settings, charts | BSD-3-Clause |
+| [pkg/profile](https://github.com/Stilltiger45/TigerSB-client/tree/main/pkg/profile) from TigerSB-client | TigerSB profile format and signature | GPL-3.0 |
+
+## Install
+
+You need a clean VPS with Debian 11+ or Ubuntu 20.04+ (amd64 or arm64), a domain with an A record pointing to it, and root access:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/install.sh | sudo bash
 ```
 
-Установщик спросит:
+The installer asks for:
 
-1. **Роль сервера.** «Основной сервер» выпускает трафик в интернет и держит панель. «Точка маршрутизации» принимает подключения и пересылает их на основной сервер по каскаду.
-2. Для основного сервера: домен и email для сертификата. Для точки маршрутизации: адрес основного сервера.
-3. Логин и пароль администратора (пароль не короче 10 символов).
+1. **Server role.** The "main server" sends traffic to the internet and hosts the panel. The "routing point" is for the upcoming cascade.
+2. The domain and an email for the certificate.
+3. The admin login and password (at least 10 characters).
 
-В конце он покажет адрес панели вида `https://<домен>/<секретный путь>/`, его нужно сохранить. Повторный запуск той же команды ничего не ломает: он покажет состояние и адрес установленной панели.
+At the end it prints the panel address, `https://<domain>/<secret path>/`. Keep it; `tigersb info` on the server shows it again. Building from source takes a couple of minutes.
 
-Пока релизов нет, установщик скачивает исходники и собирает панель сам, при необходимости скачав Go. Это занимает пару минут.
+If your hosting has its own firewall, open ports 443 and 8443 (TCP) there.
 
-### Обновление
+## First steps
 
-Проще всего кнопкой «Обновить панель» на вкладке «Контроль» или командой `tigersb update` на сервере. Так перед обновлением создаётся точка восстановления, а если новая версия не запустится, она вернётся сама (подробнее в разделе «Контроль»).
+1. Open the panel address and log in.
+2. On the **Пользователи** (Users) tab, add a person and click them: the TigerSB key and the https subscription appear with QR codes.
+3. Send the key or show the QR code. In [TigerSB](https://github.com/Stilltiger45/TigerSB-client) the key is all it takes; in v2rayNG, Hiddify and others, add the https link as a subscription.
+4. When you are done, press «Закрыть панель» (Close panel) on the Overview tab. To open it again, run `tigersb open` over SSH.
 
-Тот же установщик тоже обновляет, но без точки восстановления:
+## Update and uninstall
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/install.sh | sudo bash -s -- --update
-```
+The easiest way to update is the «Обновить панель» (Update panel) button on the Контроль (Control) tab, or `tigersb update` on the server. Settings, users and the database are kept, and the VPN keeps working during the update.
 
-Настройки, пароль и база сохраняются. Усыплённая панель после обновления остаётся усыплённой.
-
-### Полное удаление с сервера
+To remove everything from the server (asks for confirmation and offers to save a copy of the settings and database):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scripts/uninstall.sh | sudo bash
 ```
 
-Удаляет все службы и таймеры `tigersb*` (панель, Caddy, сбор данных, обновление), бинарники, настройки, базу и сертификаты. Перед удалением спросит подтверждение и предложит сохранить копию настроек и базы в `/root/tigersb-backup-<дата>.tar.gz`. Точки восстановления в эту копию не входят: они нужны только на этом сервере. Чтобы перенести панель на другой сервер, распакуйте архив там командой `tar -xzf <архив> -C /` и запустите установщик: он поднимет панель с теми же пользователями, паролем и секретным адресом.
+## Server commands
 
-### Из клона репозитория
-
-```bash
-git clone https://github.com/Stilltiger45/TigerSB-panel.git
-cd TigerSB-panel
-sudo ./scripts/install.sh            # или --binary ./tigersb-linux-amd64 с готовым бинарником
-```
-
-## Заглушка и сертификат
-
-На каждом сервере установщик ставит [Caddy](https://caddyserver.com) (служба `tigersb-caddy`). Он показывает на 443 порту безобидную страницу «Технические работы» и сам получает и продлевает сертификат Let's Encrypt.
-
-- Сертификат выпускается только через порт 443 (TLS-ALPN), порт 80 закрыт. A-запись домена должна указывать на сервер.
-- Шаблонов заглушки четыре: «Домашняя выпечка», «Фотоблог», «Дачный дневник» и «Книжный клуб». При установке шаблон выбирается случайно, поэтому серверы не похожи друг на друга. Слов про VPN на страницах нет, каждая весит меньше 2 КБ и не грузит ничего внешнего. Любой путь на сайте отдаёт ту же страницу, а заголовок `Server` убран.
-- Домен, email, шаблон и название сайта меняются в панели на вкладке «Сайт и сертификат». Там же видно, кем выдан сертификат и до какого числа он действует. Изменения применяются сразу, без перезапуска.
-- Без домена заглушка открывается по `http://IP/`.
-- Caddy работает отдельно от панели, поэтому заглушка и продление сертификата продолжают работать, пока панель спит.
-
-С сервера то же самое: `tigersb site status` показывает состояние, `tigersb site apply` заново записывает настройки и применяет их.
-
-## Вход в панель
-
-Панель открывается в браузере по адресу `https://<домен>/<секретный путь>/`. Адрес показывает команда `tigersb info` на сервере. Секретный путь случайный, 32 символа, а на любой другой путь сайт отдаёт заглушку.
-
-Caddy пропускает к панели только этот путь и только по HTTPS. Сама панель слушает лишь `127.0.0.1`, поэтому напрямую из интернета до неё не достучаться.
-
-**Открыть и закрыть.** Панель можно выставлять на время настройки и потом прятать:
-
-```bash
-tigersb close   # по секретному пути снова заглушка, панель не видна даже знающему адрес
-tigersb open    # панель снова открывается по секретному пути
-```
-
-Закрыть можно и из самой панели, кнопкой «Закрыть панель» на вкладке «Обзор». Открыть снова можно только командой `tigersb open` по SSH. Это сделано специально: если пароль утечёт, по домену в закрытую панель не попасть. `tigersb sleep` тоже прячет панель, а `tigersb wake` возвращает её в прежнее состояние.
-
-Без домена панель на домене не публикуется, чтобы пароль не ходил по сети открытым текстом.
-
-**Запасной вход через SSH-туннель.** Он работает всегда, даже когда панель закрыта или домена нет. Команду туннеля с портом тоже показывает `tigersb info`. Запускать её нужно на своём компьютере, а не на сервере:
-
-```bash
-ssh -N -L 8080:127.0.0.1:<порт> root@<IP сервера>
-```
-
-Пока окно с командой открыто, панель доступна по адресу `http://localhost:8080/<секретный путь>/`.
-
-## Контроль
-
-Вкладка «Контроль» показывает, как живёт сервер, и обновляет панель.
-
-**Ресурсы.** Раз в 5 минут таймер `tigersb-monitor.timer` записывает загрузку процессора, память, подкачку, диск, входящий и исходящий трафик, нагрузку и время работы. Данные хранятся 7 дней, графики строятся за 6 часов, сутки или неделю. Значения усреднены между замерами. Время, которое забирает гипервизор хостинга (steal), в загрузку не входит и показано отдельно. После перезагрузки или долгого перерыва средние не придумываются, на графике остаётся разрыв. Таймер работает отдельно от панели, поэтому данные собираются и пока она спит.
-
-**Проверка работоспособности.** Тот же таймер раз в 5 минут проверяет всё, что есть на сервере. Кнопка «Проверить сейчас» запускает проверку сразу. Сначала показываются ошибки, потом предупреждения. У каждой проблемы есть подсказка, что сделать. Проверяются:
-
-- службы панели и Caddy;
-- заглушка и сертификат;
-- что домен указывает на сервер;
-- что вход по секретному пути совпадает с `tigersb open`/`close`;
-- место на диске и память;
-- сам сбор данных;
-- синхронизация часов;
-- связь с GitHub;
-- целость базы;
-- последнее обновление и наличие точек восстановления.
-
-Ещё проверяются Xray в Docker, служба порта 443 (`tigersb-edge`) и служба подписок (`tigersb-sub`). sing-box и точки маршрутизации уже стоят в списке как «скоро» и начнут проверяться вместе со своими этапами.
-
-**Обновление.** «Проверить обновления» спрашивает GitHub о новых коммитах в `main` и показывает, какие изменения придут. Таймер тоже проверяет это раз в 6 часов. «Обновить панель» делает следующее:
-
-1. запускает отдельную службу `tigersb-update.service`, поэтому перезапуск панели посреди обновления её не прерывает;
-2. создаёт точку восстановления;
-3. скачивает установщик того же коммита и запускает его с `--update --ref <коммит>`;
-4. проверяет, что установилась нужная версия, Caddy работает, а панель отвечает;
-5. если что-то не так, возвращает точку и пишет причину: GitHub недоступен, кончилось место, не собралось и так далее.
-
-Пока идёт обновление, страница показывает шаги и журнал, а когда оно закончится, перезагрузится сама. VPN и подписки во время обновления продолжают работать. Схема взята у [web-panel-proxy](https://github.com/POLESNIESOVETI12/web-panel-proxy): отдельная служба, временный откат, журнал и понятная причина сбоя.
-
-**Точки восстановления.** Точка содержит программу панели, настройки, копию базы (с пользователями и протоколами), заглушку, настройки Caddy с сертификатами и службы systemd. Хранятся последние пять в `/var/lib/tigersb/restore`. Создать точку можно кнопкой, а перед каждым обновлением она создаётся сама. «Вернуть» откатывает всё это к состоянию на момент точки, и то, что изменилось после, пропадает. Если панель не открывается, то же самое можно сделать по SSH: `tigersb restore list`, затем `tigersb restore apply <имя>`.
-
-## Пользователи
-
-Вкладка «Пользователи» добавляет людей в VPN в два клика: имя и число устройств. Пользователь сразу получает доступ ко всем включённым протоколам, Xray при этом не перезапускается и подключения остальных не рвутся.
-
-- У каждого пользователя две ссылки на одну и ту же подписку, обе с кнопками «Копировать» и QR-кодом:
-  - **ключ TigerSB** `tigersb://…` для приложения [TigerSB](https://github.com/Stilltiger45/TigerSB-client);
-  - **подписка https** `https://<домен>/sub/<токен>` для v2rayNG, Hiddify, Happ, Streisand и других клиентов на Xray.
-
-  Отдельные ссылки протоколов больше не показываются: все протоколы приходят внутри подписки и обновляются сами, когда меняются настройки на вкладке «Протоколы».
-- **Устройства.** Каждое устройство, скачавшее подписку, появляется в списке: модель, система, приложение, IP, когда подписка обновлялась последний раз и с какого дня устройство подключено. Кнопка «Удалить» освобождает место.
-- Отдельно видно, с каких адресов пользователь подключён к VPN сейчас, сколько трафика ушло и пришло и когда он был в сети. Данные обновляются при открытии вкладки и раз в 5 минут таймером.
-- Можно поменять имя и число устройств, временно выключить пользователя, выдать новые ссылки (старые подписки и ключ перестают работать, список устройств очищается), обнулить трафик и удалить пользователя.
-
-## Протоколы
-
-Xray-core работает в Docker-контейнере `tigersb-xray` (служба `tigersb-xray`) из официального образа, закреплённого по хешу. Контейнер запускается без прав, с файловой системой только для чтения и без журналов, чтобы на диске не оставалось адресов пользователей.
-
-Оба протокола — VLESS с REALITY: для постороннего сервер выглядит как обычный сайт из поля SNI, а подключиться может только тот, у кого есть ключ. Начальные настройки:
-
-| | gRPC | XHTTP |
-|---|---|---|
-| Порт | 8443 | 443 |
-| SNI | google.com | cloudflare.com |
-| Транспорт | случайное имя сервиса (`serviceName`), режим gun | случайный путь, режим `auto`, отправка методом POST, `xPaddingBytes` 100-1000, `scMaxEachPostBytes` 1000000, `scMinPostsIntervalMs` 30 |
-
-На вкладке «Протоколы» всё это меняется вручную:
-
-- порт (443 или 1024–65535), SNI, адрес, куда отправлять чужих (`target`), отпечаток браузера, `spiderX`, ключи REALITY и short ID;
-- для gRPC: имя сервиса, `authority`, режим multi, пинг при простое, `user_agent`, начальное окно;
-- для XHTTP: путь, `host`, режим (`auto`, `packet-up`, `stream-up`, `stream-one`), метод отправки, дополнение, размеры и паузы POST, пинг stream-up, `noSSEHeader` и мультиплексирование (xmux).
-
-Поля с пометкой «клиент» попадают только в ссылку. Перед сохранением панель проверяет конфиг в одноразовом контейнере Xray (`xray -test`) и только потом перезапускает Xray. После смены порта, SNI, ключей или транспорта пользователям нужно раздать новые ссылки.
-
-**Подбор SNI.** Кнопка «Проверить» смотрит с сервера, годится ли сайт для маскировки: TLS 1.3, HTTP/2, обмен ключами X25519 и действующий сертификат. «Найти рядом» и блок «Поиск SNI сканером» перебирают соседние адреса сервера (подсеть /24, до 512 адресов) и показывают подходящие сайты. Сосед из той же сети — лучшая маскировка. Идея сканера взята у [RealiTLScanner](https://github.com/XTLS/RealiTLScanner) (MPL-2.0), код написан заново.
-
-**Порт 443 общий.** Порт 443 держит маленькая служба `tigersb-edge`. Она читает имя сайта из начала TLS-подключения и отправляет домен панели в Caddy, а SNI протоколов в Xray. Всё остальное, например сканеры без SNI, уходит в протокол на 443, и REALITY показывает им сайт-маскировку. Поэтому XHTTP и сайт с панелью живут на одном порту, а оба протокола могут стоять на 443 с разными SNI. Если у хостинга есть свой файрвол, порты протоколов (по умолчанию 443 и 8443) нужно открыть в нём.
-
-Xray отмечает транспорт gRPC как устаревший и советует XHTTP. gRPC пока работает и нужен для каскада, но основным лучше считать XHTTP.
-
-## Подписки
-
-Подписки отдаёт служба `tigersb-sub` на `127.0.0.1:10086`, а Caddy публикует их по адресу `https://<домен>/sub/<токен>`. Служба работает отдельно от панели, поэтому подписки и лимит устройств работают и когда панель закрыта (`tigersb close`), и когда она спит (`tigersb sleep`). Без домена подписок нет: им нужен сертификат.
-
-**Ключ TigerSB:**
-
-```
-tigersb://add?url=https://<домен>/sub/<токен>&pk=<ключ подписи панели>&name=TigerSB
-```
-
-- `url` — адрес подписки. Токен случайный (192 бита) и у каждого пользователя свой, поэтому ссылку можно отозвать или выпустить заново, не трогая остальных.
-- `pk` — публичный ключ Ed25519 панели. Ключ создаётся один раз и хранится в базе. Панель подписывает каждый профиль, а клиент принимает только профиль с этой подписью, поэтому подменить серверы по дороге нельзя.
-
-Приложению TigerSB (оно представляется как `TigerSB-…`) панель отдаёт подписанный профиль: выход «основной сервер» с транспортами XHTTP (приоритет выше) и gRPC и список заблокированного `geosite:ru-blocked`/`geoip:ru-blocked`. Формат описан в [docs/profile.md](https://github.com/Stilltiger45/TigerSB-client/blob/main/docs/profile.md) клиента. Панель собирает и подписывает профиль пакетом `pkg/profile` из репозитория клиента, поэтому формат у них общий. Остальным клиентам по тому же адресу уходит обычный список ссылок `vless://` в base64 с заголовками `profile-title`, `profile-update-interval` (6 часов) и `subscription-userinfo` (трафик).
-
-**Лимит устройств.** Клиент при каждом обновлении присылает `x-hwid`, `x-device-os`, `x-ver-os` и `x-device-model`. Новое устройство получает подписку, только пока у пользователя есть свободное место. Сверх лимита приложение TigerSB получает отказ 403 с объяснением, а другие клиенты — один нерабочий сервер с названием «Лимит устройств исчерпан…». Клиенты без `x-hwid` считаются по одному устройству на приложение. Лимит работает на выдаче подписки: тот, кто уже получил профиль, подключается, пока ему не выдадут «Новые ссылки».
-
-**Защита.** Подписка неотличима от заглушки, пока не знаешь токен:
-
-- неверный, старый или чужой токен, выключенный пользователь, другой путь или метод — служба отвечает 404, а Caddy вместо него отдаёт ту же страницу «Технические работы» с теми же заголовками, что и на любом другом адресе сайта;
-- если служба подписок не работает, Caddy тоже показывает заглушку, а не ошибку 502;
-- ответы подписки не кэшируются (`Cache-Control: no-store`), заголовки `Server` и `Via` убраны, HTTP/3 выключен, чтобы сайт не рекламировал внутренний порт;
-- адрес устройства панель берёт из заголовка PROXY, который ставит служба порта 443, поэтому подделать его заголовком `X-Forwarded-For` нельзя.
-
-## Команды на сервере
-
-| Команда | Что делает |
+| Command | What it does |
 |---|---|
-| `tigersb info` | показать адрес панели и запасную команду SSH-туннеля |
-| `tigersb open` | открыть панель по `https://<домен>/<секретный путь>/` |
-| `tigersb close` | спрятать панель: по секретному пути снова заглушка |
-| `tigersb site status` | домен, шаблон заглушки, состояние Caddy и сертификата |
-| `tigersb site set --domain <домен> [--email <почта>]` | сменить домен из консоли, если панель недоступна |
-| `tigersb site apply` | заново записать заглушку и настройки Caddy и применить их |
-| `tigersb passwd --admin <логин>` | сменить пароль, все сессии завершаются |
-| `tigersb sleep` | усыпить панель: процесс остановлен, по секретному пути заглушка, туннель тоже не поможет. VPN и подписки продолжают работать |
-| `tigersb wake` | разбудить панель |
-| `tigersb status` | состояние панели |
-| `tigersb update` | обновить панель с GitHub: точка восстановления, обновление, откат при сбое |
-| `tigersb restore list` | список точек восстановления |
-| `tigersb restore create` | создать точку восстановления |
-| `tigersb restore apply <имя>` | вернуть точку восстановления |
-| `tigersb xray status` | состояние Xray и порта 443, протоколы и число пользователей |
-| `tigersb xray apply` | заново собрать конфиг Xray из базы, проверить и перезапустить |
-| `tigersb monitor` | снять показатели и проверить сервер сейчас (обычно это делает таймер) |
+| `tigersb info` | show the panel address and the fallback SSH tunnel command |
+| `tigersb open` | open the panel at `https://<domain>/<secret path>/` |
+| `tigersb close` | hide the panel: the secret path shows the maintenance page again |
+| `tigersb site status` | domain, page template, Caddy and certificate state |
+| `tigersb site set --domain <domain> [--email <email>]` | change the domain from the console if the panel is unreachable |
+| `tigersb site apply` | rewrite the maintenance page and Caddy settings and apply them |
+| `tigersb passwd --admin <login>` | change the password and end all sessions |
+| `tigersb sleep` | put the panel to sleep: the process stops and the secret path shows the maintenance page. VPN and subscriptions keep working |
+| `tigersb wake` | wake the panel |
+| `tigersb status` | panel state |
+| `tigersb update` | update from GitHub: restore point, update, rollback on failure |
+| `tigersb restore list` | list restore points |
+| `tigersb restore create` | create a restore point |
+| `tigersb restore apply <name>` | roll back to a restore point |
+| `tigersb xray status` | Xray and port 443 state, protocols and user count |
+| `tigersb xray apply` | rebuild the Xray config from the database, test it and restart |
+| `tigersb monitor` | take metrics and run health checks now (a timer does this every 5 minutes) |
 
-## Защита входа
+## Documentation
 
-- Пароли хранятся как Argon2id, сессии как SHA-256 от токена.
-- Cookie `HttpOnly`, `SameSite=Strict`, только для секретного пути, при входе по домену ещё и `Secure`. Сессия живёт 12 часов.
-- После 5 неудачных попыток логин блокируется на 15 минут, после 30 попыток в сумме блокируется весь вход.
-- Запросы на изменение принимаются только как JSON с того же источника.
+- [Panel guide](docs/guide.md) (in Russian): every tab, login and the SSH tunnel, subscriptions and the device limit, updates and restore points, login protection.
+- [Architecture](docs/architecture.md) (in Russian): services, ports, database, how settings are applied.
+- [Profile and key format](https://github.com/Stilltiger45/TigerSB-client/blob/main/docs/profile.md) in the client repository.
+- [SECURITY.md](SECURITY.md): how to report a vulnerability.
 
-## Разработка
+## Development
 
 ```bash
 go test ./...
 CGO_ENABLED=0 go build -o tigersb ./cmd/tigersb
 ```
 
-Тег `v*` собирает релиз с бинарниками `tigersb-linux-amd64` и `tigersb-linux-arm64`.
+Installing from a clone builds the panel from the working copy:
 
-## Лицензия
+```bash
+git clone https://github.com/Stilltiger45/TigerSB-panel.git
+cd TigerSB-panel
+sudo ./scripts/install.sh            # or --binary ./tigersb-linux-amd64 with a ready binary
+```
 
-GPL-3.0, см. [LICENSE](LICENSE). Лицензия совпадает с лицензией [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client), поэтому панель может подключать его пакет `pkg/profile`. Все зависимости панели распространяются под MIT или BSD и с GPL-3.0 совместимы. Сторонние компоненты, включая Caddy (Apache-2.0), и заимствованные идеи перечислены в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) и на вкладке «О панели». Это проверяет `scripts/check-licenses.sh` в CI: он падает, если у зависимости нет лицензии или она несовместима (AGPL, SSPL, BSL и подобные).
+CI runs `gofmt`, `go vet`, the tests with `-race`, `shellcheck` on the scripts and a dependency license check. A `v*` tag builds a release with `tigersb-linux-amd64` and `tigersb-linux-arm64`.
 
-Подробности устройства: [docs/architecture.md](docs/architecture.md). О найденных уязвимостях: [SECURITY.md](SECURITY.md).
+## License
+
+GPL-3.0, see [LICENSE](LICENSE). It matches the license of [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client), so the panel can use its `pkg/profile` package. All Go dependencies are MIT or BSD and compatible with GPL-3.0. Third-party components, including Caddy (Apache-2.0), and borrowed ideas are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and on the «О панели» (About) tab. `scripts/check-licenses.sh` enforces this in CI: it fails when a dependency has no license or an incompatible one (AGPL, SSPL, BSL and similar).
