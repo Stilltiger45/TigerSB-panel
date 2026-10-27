@@ -153,6 +153,28 @@ func TestRenderAndRoutes(t *testing.T) {
 	if b := r.Pick(""); b == nil || b.Addr != "127.0.0.1:10442" {
 		t.Errorf("unknown names go to xhttp: %+v", b)
 	}
+	if b := r.Pick("cloudflare.com"); b.Congestion != "" {
+		t.Errorf("BBR is off by default: %+v", b)
+	}
+
+	// BBR on: gRPC on its own port sets it on the listener, XHTTP on 443
+	// through the edge router, which owns the client's connection.
+	s.GRPC.BBR, s.XHTTP.BBR = true, true
+	conf, _ = Render(s, users())
+	if err := json.Unmarshal(conf, &c); err != nil {
+		t.Fatal(err)
+	}
+	if so, _ := c.Inbounds[0].Stream["sockopt"].(map[string]any); so["tcpCongestion"] != "bbr" {
+		t.Errorf("grpc sockopt: %v", c.Inbounds[0].Stream["sockopt"])
+	}
+	if so, _ := c.Inbounds[1].Stream["sockopt"].(map[string]any); so["tcpCongestion"] != nil || so["acceptProxyProtocol"] != true {
+		t.Errorf("xhttp sockopt: %v", c.Inbounds[1].Stream["sockopt"])
+	}
+	r = Routes(s, "vpn.example.com")
+	if r.Pick("cloudflare.com").Congestion != "bbr" || r.Pick("").Congestion != "bbr" || r.Pick("vpn.example.com").Congestion != "" {
+		t.Errorf("edge routes: %+v", r)
+	}
+
 	s.XHTTP.Port = 2053
 	if b := Routes(s, "vpn.example.com").Pick("other"); b == nil || b.Addr != "127.0.0.1:8444" {
 		t.Errorf("without a protocol on 443 unknown names go to Caddy: %+v", b)

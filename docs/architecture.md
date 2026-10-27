@@ -33,6 +33,7 @@
   - остальное → протокол на 443 (XHTTP, иначе gRPC, иначе Caddy).
 
   Маршруты лежат в `/var/lib/tigersb/edge/routes.json`, edge перечитывает их раз в 2 секунды.
+  У маршрута может быть `congestion` (`bbr`): edge ставит этот алгоритм (`TCP_CONGESTION`) на подключение клиента, если в протоколе включён BBR. Протокол не на 443 получает BBR через `sockopt.tcpCongestion` в inbound Xray. Ядро должно разрешать `bbr` в `net.ipv4.tcp_allowed_congestion_control`: это делает установщик, панель показывает состояние (`bbr_ready`).
 - Xray-core (`internal/xray`, служба `tigersb-xray`). Официальный образ `ghcr.io/xtls/xray-core` закреплён по хешу; `docker run --network host --read-only --cap-drop ALL --log-driver none`, конфиг `/var/lib/tigersb/xray/config.json` смонтирован только для чтения. Docker ставится из пакетов дистрибутива, `DOCKER_CONFIG` у служб панели указывает в `/var/lib/tigersb/docker`.
   - Настройки протоколов — JSON в `settings` (`xray.protocols`), пользователи — таблица `users`. Конфиг собирается из них целиком (`xray.Render`).
   - Протокол не на 443 слушает свой порт сам, протокол на 443 слушает `127.0.0.1` и внутренний порт.

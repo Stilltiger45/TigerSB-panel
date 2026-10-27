@@ -47,7 +47,7 @@ func realitySettings(r Reality) obj {
 	}
 }
 
-func inbound(tag string, port, inner int, users []store.User, stream obj) obj {
+func inbound(tag string, port, inner int, bbr bool, users []store.User, stream obj) obj {
 	in := obj{
 		"tag":      tag,
 		"port":     port,
@@ -56,9 +56,13 @@ func inbound(tag string, port, inner int, users []store.User, stream obj) obj {
 		"sniffing": obj{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "routeOnly": true},
 	}
 	if behindEdge(port) {
+		// Clients talk to the edge router, which sets BBR on their side.
 		in["listen"] = "127.0.0.1"
 		in["port"] = inner
 		stream["sockopt"] = obj{"acceptProxyProtocol": true}
+	} else if bbr {
+		// Accepted connections inherit it from the listener.
+		stream["sockopt"] = obj{"tcpCongestion": Congestion(true)}
 	}
 	in["streamSettings"] = stream
 	return in
@@ -78,7 +82,7 @@ func grpcInbound(g GRPC, users []store.User) obj {
 	if g.HealthCheckTimeout > 0 {
 		gs["health_check_timeout"] = g.HealthCheckTimeout
 	}
-	return inbound(GRPCTag, g.Port, GRPCInner, users, obj{
+	return inbound(GRPCTag, g.Port, GRPCInner, g.BBR, users, obj{
 		"network":         "grpc",
 		"security":        "reality",
 		"realitySettings": realitySettings(g.Reality),
@@ -97,7 +101,7 @@ func xhttpInbound(x XHTTP, users []store.User) obj {
 	putRange(xs, "xPaddingBytes", x.XPaddingBytes)
 	putRange(xs, "scMaxEachPostBytes", x.ScMaxEachPostBytes)
 	putRange(xs, "scStreamUpServerSecs", x.ScStreamUpServerSecs)
-	return inbound(XHTTPTag, x.Port, XHTTPInner, users, obj{
+	return inbound(XHTTPTag, x.Port, XHTTPInner, x.BBR, users, obj{
 		"network":         "xhttp",
 		"security":        "reality",
 		"realitySettings": realitySettings(x.Reality),
@@ -147,12 +151,12 @@ func Routes(s Settings, domain string) edge.Routes {
 		r.Default = &caddy
 	}
 	if s.GRPC.Enabled && behindEdge(s.GRPC.Port) {
-		b := edge.Backend{Addr: loop(GRPCInner), Proxy: true}
+		b := edge.Backend{Addr: loop(GRPCInner), Proxy: true, Congestion: Congestion(s.GRPC.BBR)}
 		r.SNI[s.GRPC.Reality.SNI] = b
 		r.Default = &b
 	}
 	if s.XHTTP.Enabled && behindEdge(s.XHTTP.Port) {
-		b := edge.Backend{Addr: loop(XHTTPInner), Proxy: true}
+		b := edge.Backend{Addr: loop(XHTTPInner), Proxy: true, Congestion: Congestion(s.XHTTP.BBR)}
 		r.SNI[s.XHTTP.Reality.SNI] = b
 		r.Default = &b
 	}

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -65,6 +66,7 @@ type Reality struct {
 type GRPC struct {
 	Enabled     bool    `json:"enabled"`
 	Port        int     `json:"port"`
+	BBR         bool    `json:"bbr"` // see Congestion
 	Reality     Reality `json:"reality"`
 	ServiceName string  `json:"service_name"`
 	Authority   string  `json:"authority"`  // client-only
@@ -91,6 +93,7 @@ type Xmux struct {
 type XHTTP struct {
 	Enabled              bool    `json:"enabled"`
 	Port                 int     `json:"port"`
+	BBR                  bool    `json:"bbr"` // see Congestion
 	Reality              Reality `json:"reality"`
 	Path                 string  `json:"path"`
 	Host                 string  `json:"host"`
@@ -111,6 +114,27 @@ type Settings struct {
 	Address string `json:"address"`
 	GRPC    GRPC   `json:"grpc"`
 	XHTTP   XHTTP  `json:"xhttp"`
+}
+
+// Congestion is the TCP congestion control of a protocol's connections to
+// clients: BBR when its switch is on, else the kernel's default. BBR keeps
+// downloads fast on long and lossy paths, where CUBIC backs off too much.
+// The kernel lets unprivileged sockets pick it only when it is listed in
+// net.ipv4.tcp_allowed_congestion_control, which the installer sees to.
+func Congestion(bbr bool) string {
+	if bbr {
+		return "bbr"
+	}
+	return ""
+}
+
+// AllowedPath lists the congestion controls any program may pick.
+var AllowedPath = "/proc/sys/net/ipv4/tcp_allowed_congestion_control"
+
+// BBRReady reports whether Xray and the edge router may switch to BBR.
+func BBRReady() bool {
+	b, err := os.ReadFile(AllowedPath)
+	return err == nil && slices.Contains(strings.Fields(string(b)), "bbr")
 }
 
 // Choices offered by the UI.

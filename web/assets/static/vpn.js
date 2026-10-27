@@ -499,7 +499,34 @@ function protoCard(proto, title, fields, extra) {
   for (const spec of fields) transport.append(field(p, spec, dirty));
   const more = [el("h3", { text: "Маскировка (REALITY)" }), disguise, keysBlock(proto, r), el("h3", { text: "Настройки " + title }), transport];
   if (extra) more.push(extra(p));
-  return card(proto, title, "Xray", p, portInput(p, portText), more);
+  return card(proto, title, "Xray", p, portBBR(p), more);
+}
+
+// portBBR is the port with the BBR switch on the same line: BBR speeds up
+// the protocol's connections to clients.
+function portBBR(p) {
+  const hint = el("span", { class: "hint", text: portText(p.port) });
+  const port = el("input", { type: "number", min: 1, max: 65535, value: p.port, class: "num", "aria-label": "Порт" });
+  port.addEventListener("input", () => {
+    p.port = Number(port.value);
+    hint.textContent = portText(p.port);
+    dirty();
+  });
+  const box = el("input", { type: "checkbox" });
+  box.checked = !!p.bbr;
+  box.addEventListener("change", () => {
+    p.bbr = box.checked;
+    dirty();
+  });
+  const row = el("div", { class: "port-row" },
+    el("span", { class: "label" }, "Порт"),
+    el("div", { class: "port-line" }, port, el("label", { class: "check" }, box, "BBR")),
+    hint,
+    el("span", { class: "hint", text: "BBR ускоряет скачивание на дальних и нестабильных каналах." }));
+  if (!protoData.bbr_ready) {
+    row.append(el("span", { class: "hint warn", text: "Ядро сервера пока не разрешает BBR: обновите панель, установщик его включит." }));
+  }
+  return row;
 }
 
 function tuicCard() {

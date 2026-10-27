@@ -27,6 +27,9 @@ import (
 type Backend struct {
 	Addr  string `json:"addr"`
 	Proxy bool   `json:"proxy"` // send a PROXY v1 header first
+	// Congestion is the TCP congestion control set on the client's
+	// connection, such as "bbr"; empty keeps the kernel's default.
+	Congestion string `json:"congestion,omitempty"`
 }
 
 // Routes map SNI to backends. Default takes unknown names and clients without SNI.
@@ -84,6 +87,8 @@ type Server struct {
 	mu     sync.RWMutex
 	routes Routes
 	mtime  time.Time
+
+	ccWarned sync.Once
 }
 
 // Reload re-reads the routes file when it changed. A broken file keeps the
@@ -162,6 +167,13 @@ func (s *Server) handle(c net.Conn) {
 	b := s.pick(sni)
 	if b == nil {
 		return
+	}
+	if b.Congestion != "" {
+		if err := setCongestion(c, b.Congestion); err != nil {
+			s.ccWarned.Do(func() {
+				log.Printf("edge: %s не включился, остаётся алгоритм ядра по умолчанию: %v", b.Congestion, err)
+			})
+		}
 	}
 	up, err := net.DialTimeout("tcp", b.Addr, dialTimeout)
 	if err != nil {

@@ -313,3 +313,9 @@ table.scan .row { flex-wrap: nowrap; }
 .core-card h2 { margin: 0; }
 .core-card p { margin: 0; }
 .core-card button { justify-self: start; }
+
+/* Protocols: the port and the BBR switch on one line. */
+.port-row { display: grid; gap: 6px; }
+.port-line { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.port-line label.check { font-weight: 600; }
+.port-row .label { font-size: 0.9rem; color: var(--muted); }

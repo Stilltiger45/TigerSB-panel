@@ -34,6 +34,8 @@ type protocolsResponse struct {
 	Xray         string         `json:"xray"`
 	SingboxState string         `json:"singbox_state"`
 	Edge         string         `json:"edge"`
+	// BBRReady is false when the kernel does not let the cores pick BBR.
+	BBRReady bool `json:"bbr_ready"`
 	// Applied says what the save did, for the message under the button.
 	Applied string `json:"applied,omitempty"`
 	Warning string `json:"warning,omitempty"`
@@ -83,6 +85,7 @@ func (s *Server) protocolsState(ctx context.Context) (*protocolsResponse, error)
 		Xray:         s.xrayState(),
 		SingboxState: service.UnitState(s.Run, singbox.Unit),
 		Edge:         service.UnitState(s.Run, xray.EdgeUnit),
+		BBRReady:     xray.BBRReady(),
 	}, nil
 }
 
