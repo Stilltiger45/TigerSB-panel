@@ -32,6 +32,7 @@ func cmdSub(args []string) error {
 			return set.Domain, err
 		},
 		LocalIPs: xray.LocalIPs,
+		TUICCert: e.singbox().HaveCert,
 	}
 	// The key is made now rather than on the first request, so the panel and
 	// this service never race to create it.

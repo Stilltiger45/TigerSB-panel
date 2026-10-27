@@ -10,7 +10,7 @@ ExecStart=/usr/local/bin/tigersb monitor --config /etc/tigersb/config.json
 Nice=10
 TimeoutStartSec=2min
 
-# Reads /proc and asks systemd; writes only to the database.
+# Reads /proc and asks systemd; writes the database and the sing-box files.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

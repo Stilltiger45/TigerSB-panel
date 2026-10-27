@@ -329,6 +329,7 @@ func TestRollbackAcrossEdge(t *testing.T) {
 	}
 	write(t, filepath.Join(f.l.Units, EdgeUnit), "edge")
 	write(t, filepath.Join(f.l.Units, XrayUnit), "xray")
+	write(t, filepath.Join(f.l.Units, SingboxUnit), "singbox")
 	newer, err := CreatePoint(ctx, f.l, f.st, "main-2222222", "с edge", time.Now().Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
@@ -340,7 +341,7 @@ func TestRollbackAcrossEdge(t *testing.T) {
 	joined := strings.Join(f.sys.calls, "\n")
 	stop := strings.Index(joined, "systemctl stop "+EdgeUnit)
 	caddy := strings.Index(joined, "systemctl restart tigersb-caddy.service")
-	if stop < 0 || caddy < 0 || stop > caddy || !strings.Contains(joined, "systemctl stop "+XrayUnit) {
+	if stop < 0 || caddy < 0 || stop > caddy || !strings.Contains(joined, "systemctl stop "+XrayUnit) || !strings.Contains(joined, "systemctl stop "+SingboxUnit) {
 		t.Fatalf("edge must stop before Caddy restarts:\n%s", joined)
 	}
 	if strings.Contains(joined, "restart "+EdgeUnit) {
@@ -352,7 +353,7 @@ func TestRollbackAcrossEdge(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined = strings.Join(f.sys.calls, "\n")
-	for _, want := range []string{"systemctl enable " + EdgeUnit, "systemctl restart " + EdgeUnit, "systemctl restart " + XrayUnit} {
+	for _, want := range []string{"systemctl enable " + EdgeUnit, "systemctl restart " + EdgeUnit, "systemctl restart " + XrayUnit, "systemctl restart " + SingboxUnit} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("no %q in:\n%s", want, joined)
 		}

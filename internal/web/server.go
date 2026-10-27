@@ -24,6 +24,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
 	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
@@ -63,6 +64,8 @@ type Server struct {
 
 	// Xray is the VPN core in Docker and the edge router on 443.
 	Xray *xray.Runtime
+	// Singbox is the second core, with TUIC.
+	Singbox *singbox.Runtime
 	// LocalIPs lists the server's addresses, for links.
 	LocalIPs func() ([]net.IP, error)
 	// xrayMu keeps user and protocol changes in order.
@@ -92,6 +95,7 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, version string) *Ser
 		Run:      service.ExecRunner,
 		GitHub:   &http.Client{Timeout: 20 * time.Second},
 		Xray:     xray.DefaultRuntime(filepath.Dir(cfg.DBPath)),
+		Singbox:  singbox.DefaultRuntime(filepath.Dir(cfg.DBPath)),
 		LocalIPs: xray.LocalIPs,
 	}
 }
@@ -448,6 +452,11 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 		s.xrayMu.Lock()
 		if err := s.Xray.Sync(r.Context(), s.store, set.Domain, false); err != nil {
 			log.Printf("edge routes: %v", err)
+		}
+		// TUIC goes by the domain and its certificate; the monitor timer
+		// brings in a certificate Caddy gets later.
+		if err := s.Singbox.Sync(r.Context(), s.store, set.Domain, true); err != nil {
+			log.Printf("sing-box: %v", err)
 		}
 		s.xrayMu.Unlock()
 		open, err := site.PanelOpen(r.Context(), s.store)

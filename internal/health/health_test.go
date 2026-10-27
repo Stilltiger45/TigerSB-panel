@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
@@ -24,6 +25,8 @@ type world struct {
 	routed  bool // Caddy proxies the secret path to the panel
 	ntp     string
 	ports   map[int]bool // loopback ports that accept connections
+	udp     map[int]bool // bound UDP ports
+	cert    bool         // sing-box has the domain's certificate
 	env     Env
 	cleanup func()
 }
@@ -33,8 +36,9 @@ func newWorld(t *testing.T) *world {
 	w := &world{units: map[string]string{
 		"tigersb.service": "active", "tigersb-caddy.service": "active",
 		"tigersb-edge.service": "active", "tigersb-xray.service": "active",
-		"tigersb-sub.service": "active",
-	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true, 10086: true}}
+		"tigersb-sub.service": "active", "tigersb-singbox.service": "active",
+	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true, 10086: true},
+		udp: map[int]bool{8443: true}, cert: true}
 	caddy := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if w.routed && strings.HasPrefix(r.URL.Path, "/"+secret+"/") {
 			rw.Header().Set("Content-Security-Policy", "default-src 'self'; form-action 'self'")
@@ -70,11 +74,13 @@ func newWorld(t *testing.T) *world {
 	w.env = Env{
 		Cfg: cfg, Store: st, Run: run, Roots: roots,
 		HTTPSAddr: caddy.Listener.Addr().String(), HTTPAddr: caddy.Listener.Addr().String(),
-		Lookup:    func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.5")}, nil },
-		LocalIPs:  func() ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.5")}, nil },
-		Internet:  internet.Addr().String(),
-		Listening: func(port int) bool { return w.ports[port] },
-		Updater:   &update.Updater{Layout: update.DefaultLayout(filepath.Join(dir, "config.json"), filepath.Join(dir, "panel.db")), Store: st, Version: "main-1111111", Run: run},
+		Lookup:       func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.5")}, nil },
+		LocalIPs:     func() ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.5")}, nil },
+		Internet:     internet.Addr().String(),
+		Listening:    func(port int) bool { return w.ports[port] },
+		ListeningUDP: func(port int) bool { return w.udp[port] },
+		TUICCert:     func() bool { return w.cert },
+		Updater:      &update.Updater{Layout: update.DefaultLayout(filepath.Join(dir, "config.json"), filepath.Join(dir, "panel.db")), Store: st, Version: "main-1111111", Run: run},
 	}
 	return w
 }
@@ -99,7 +105,7 @@ func TestHealthyServer(t *testing.T) {
 	for id, want := range map[string]string{
 		"panel": OK, "caddy": OK, "stub": OK, "dns": OK, "route": OK, "clock": OK,
 		"internet": OK, "db": OK, "update": OK, "monitor": Warn, "restore": Warn,
-		"disk": Off, "edge": OK, "xray": OK, "singbox": Soon, "routers": Soon,
+		"disk": Off, "edge": OK, "xray": OK, "singbox": OK, "routers": Soon,
 	} {
 		if got[id] != want {
 			t.Errorf("%s: %s, want %s", id, got[id], want)
@@ -188,10 +194,48 @@ func TestXrayAndEdge(t *testing.T) {
 	}
 }
 
+func TestSingbox(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	check := func(want, why string) {
+		t.Helper()
+		r, _ := Run(ctx, w.env)
+		if got := states(r)["singbox"]; got != want {
+			t.Errorf("%s: %s, want %s", why, got, want)
+		}
+	}
+	w.cert = false
+	check(Warn, "no certificate yet")
+	w.cert = true
+	w.udp[8443] = false
+	check(Fail, "UDP 8443 not bound")
+	s, _ := singbox.Load(ctx, w.env.Store)
+	s.TUIC.Enabled = false
+	singbox.Save(ctx, w.env.Store, s)
+	check(Off, "TUIC off")
+	w.units["tigersb-singbox.service"] = "failed"
+	check(Fail, "container down")
+}
+
 func TestBytes(t *testing.T) {
 	for n, want := range map[uint64]string{512: "512 Б", 2048: "2.0 КБ", 5 << 30: "5.0 ГБ"} {
 		if got := bytes(n); got != want {
 			t.Errorf("%d: %q, want %q", n, got, want)
 		}
+	}
+}
+
+func TestListeningUDP(t *testing.T) {
+	c, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := c.LocalAddr().(*net.UDPAddr).Port
+	if !listeningUDP(port) {
+		t.Errorf("bound port %d not seen", port)
+	}
+	c.Close()
+	if listeningUDP(port) {
+		t.Errorf("closed port %d still seen", port)
 	}
 }

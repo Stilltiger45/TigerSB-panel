@@ -266,6 +266,11 @@ button.danger { color: var(--error); border-color: rgba(255, 107, 107, 0.45); }
 
 /* Protocols tab */
 .proto-body { display: grid; gap: 12px; margin-top: 10px; }
+details.more { border-top: 1px solid var(--line); padding-top: 4px; }
+details.more[open] { display: grid; gap: 12px; }
+details.more summary { margin: 6px 0 0; color: var(--muted); }
+.tag.core { margin-left: 10px; vertical-align: middle; }
+.hint.warn { color: var(--orange-light); }
 .proto-body h3 { font-size: 0.95rem; margin: 6px 0 0; color: var(--orange-light); }
 .fields { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
 .fields label.wide, label.wide { grid-column: 1 / -1; }

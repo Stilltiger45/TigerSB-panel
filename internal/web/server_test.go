@@ -18,6 +18,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
 	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/metrics"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
@@ -53,6 +54,12 @@ func newTestServer(t *testing.T) *Server {
 	s.Run = func(string, ...string) (string, error) { return "inactive", errors.New("exit 3") }
 	s.Xray = &xray.Runtime{
 		Dir: filepath.Join(dir, "xray"), Routes: filepath.Join(dir, "edge", "routes.json"), Image: "xray:test",
+		Exec: func(context.Context, []byte, string, ...string) (string, error) {
+			return "", errors.New("no docker here")
+		},
+	}
+	s.Singbox = &singbox.Runtime{
+		Dir: filepath.Join(dir, "singbox"), Certs: s.Site.Dir, Image: "singbox:test",
 		Exec: func(context.Context, []byte, string, ...string) (string, error) {
 			return "", errors.New("no docker here")
 		},

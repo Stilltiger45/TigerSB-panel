@@ -198,3 +198,26 @@ func TestSigningKeyStays(t *testing.T) {
 		t.Fatalf("key %s: %v %+v", l.TigerSB, err, k)
 	}
 }
+
+// With sing-box holding the certificate, TUIC joins both subscriptions.
+func TestTUICInSubscriptions(t *testing.T) {
+	h, st, u := setup(t)
+	h.TUICCert = func() bool { return true }
+	w := get(h, http.MethodGet, "/sub/"+u.SubToken, "TigerSB-android/0.1", "hw1")
+	pk, _ := PublicKey(context.Background(), st)
+	pinned, _ := profile.DecodePublicKey(pk)
+	p, _, err := profile.Open(w.Body.Bytes(), pinned)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, w.Body)
+	}
+	tr := p.Exits[0].Transports
+	if len(tr) != 3 || tr[2].ID != "tuic" || tr[2].Prio != 30 || !strings.Contains(string(tr[2].Xray), `"serverName":"vpn.example.com"`) {
+		t.Fatalf("transports: %+v", tr)
+	}
+	w = get(h, http.MethodGet, "/sub/"+u.SubToken, "Hiddify/2.0", "hw1")
+	raw, _ := base64.StdEncoding.DecodeString(w.Body.String())
+	lines := strings.Split(string(raw), "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[2], "tuic://"+u.UUID+":") || !strings.Contains(lines[2], "sni=vpn.example.com") {
+		t.Fatalf("links: %q", lines)
+	}
+}

@@ -53,7 +53,7 @@
       <h2>Скоро здесь</h2>
       <ul class="soon">
         <li>Серверы и точки маршрутизации</li>
-        <li>Подключения: каскад, Yandex CDN, TUIC</li>
+        <li>Подключения: каскад, Yandex CDN</li>
         <li>CDN-домены</li>
       </ul>
     </div>
@@ -95,10 +95,11 @@
         <h2>Протоколы</h2>
         <div class="row">
           <span id="pr-xray" class="pill off">Xray</span>
+          <span id="pr-singbox" class="pill off">sing-box</span>
           <span id="pr-edge" class="pill off">Порт 443</span>
         </div>
       </div>
-      <p class="muted">Оба протокола — VLESS с REALITY: для постороннего взгляда сервер выглядит как сайт из поля SNI. Порт 443 общий с сайтом панели: сервер различает подключения по SNI.</p>
+      <p class="muted">Три протокола в двух контейнерах. gRPC и XHTTP работают в Xray: это VLESS с REALITY, для постороннего взгляда сервер выглядит как сайт из поля SNI, а порт 443 общий с сайтом панели. TUIC работает в sing-box: это QUIC по UDP с настоящим сертификатом сайта. Все включённые протоколы приходят пользователям в подписке.</p>
       <label>Адрес сервера в ссылках
         <input id="pr-address" autocomplete="off" spellcheck="false">
         <span class="hint" id="pr-address-hint"></span>
@@ -106,7 +107,7 @@
     </div>
     <div class="grid" id="pr-cards"></div>
     <div class="glass savebar">
-      <p class="hint">После сохранения Xray перезапустится, подключения прервутся на секунду. Если поменялись порт, SNI, ключи или настройки транспорта, раздайте пользователям новые ссылки.</p>
+      <p class="hint">Перезапускается только то ядро, чьи настройки поменялись: подключения через него прервутся: у Xray на секунду, у TUIC до 12 секунд. Подписки обновятся сами, а TigerSB и другие клиенты подхватят новые настройки при следующем обновлении подписки.</p>
       <div class="row">
         <button type="button" id="pr-save">Сохранить и применить</button>
         <button type="button" class="ghost" id="pr-reset">Отменить изменения</button>
@@ -250,7 +251,8 @@
       <table class="lic">
         <tr><th>Компонент</th><th>Лицензия</th><th>Как используется</th></tr>
         <tr><td>Xray-core 26.9.30</td><td>MPL-2.0</td><td>VPN-ядро: протоколы gRPC и XHTTP с REALITY; официальный Docker-образ ghcr.io/xtls/xray-core без изменений, закреплён по хешу</td></tr>
-        <tr><td>Docker (docker.io)</td><td>Apache-2.0</td><td>запуск контейнера Xray; пакет из репозитория дистрибутива</td></tr>
+        <tr><td>sing-box 1.14.4</td><td>GPL-3.0-or-later</td><td>второе VPN-ядро: протокол TUIC; официальный Docker-образ ghcr.io/sagernet/sing-box без изменений, закреплён по хешу</td></tr>
+        <tr><td>Docker (docker.io)</td><td>Apache-2.0</td><td>запуск контейнеров Xray и sing-box; пакет из репозитория дистрибутива</td></tr>
         <tr><td>Caddy 2.11.4</td><td>Apache-2.0</td><td>веб-сервер заглушки и сертификаты; официальная сборка без изменений, текст лицензии в /usr/local/lib/tigersb/caddy.LICENSE</td></tr>
         <tr><td>rsc.io/qr</td><td>BSD-3-Clause</td><td>QR-коды ссылок</td></tr>
         <tr><td>TigerSB-client pkg/profile</td><td>GPL-3.0</td><td>формат профиля, ключ tigersb:// и подпись подписок; тот же автор</td></tr>

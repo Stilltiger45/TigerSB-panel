@@ -317,6 +317,14 @@ const XHTTP_FIELDS = [
   { key: "no_sse_header", label: "Без заголовка SSE (noSSEHeader)", kind: "bool" },
 ];
 
+const TUIC_FIELDS = [
+  { key: "congestion_control", label: "Управление перегрузкой", kind: "select", options: "congestion_controls", hint: "bbr быстрее на мобильных сетях и дальних серверах." },
+  { key: "udp_relay_mode", label: "Режим UDP", kind: "select", options: "udp_relay_modes", client: true, hint: "native — каждый пакет отдельно, quic — надёжнее, но медленнее для игр и звонков." },
+  { key: "zero_rtt_handshake", label: "Быстрое переподключение (0-RTT)", kind: "bool", hint: "Экономит одно путешествие пакета, но слабее защищает от повтора." },
+  { key: "heartbeat", label: "Пинг сервера, с (heartbeat)", kind: "num", hint: "0 — выключено. Держит соединение живым у мобильных операторов." },
+  { key: "auth_timeout", label: "Ждать вход клиента, с (auth_timeout)", kind: "num" },
+];
+
 const XMUX_FIELDS = [
   { key: "max_concurrency", label: "Потоков на соединение (maxConcurrency)", kind: "range", hint: "Или это, или maxConnections." },
   { key: "max_connections", label: "Соединений (maxConnections)", kind: "range" },
@@ -452,9 +460,12 @@ function keysBlock(proto, r) {
     el("div", { class: "row" }, regen));
 }
 
-function protoCard(proto, title, fields, extra) {
-  const p = protoData.settings[proto];
-  const r = p.reality;
+// Cards whose settings the admin unfolded stay unfolded after a re-render.
+const unfolded = new Set();
+
+// card is one protocol: the name, the core it runs in, on/off and the port
+// in sight; everything else folds away under "Все настройки".
+function card(proto, title, core, p, portRow, more) {
   const enabled = el("input", { type: "checkbox" });
   enabled.checked = p.enabled;
   enabled.addEventListener("change", () => {
@@ -462,14 +473,32 @@ function protoCard(proto, title, fields, extra) {
     body.hidden = !p.enabled;
     dirty();
   });
+  const details = el("details", { class: "more" }, el("summary", { text: "Все настройки" }), ...more);
+  details.open = unfolded.has(proto);
+  details.addEventListener("toggle", () => (details.open ? unfolded.add(proto) : unfolded.delete(proto)));
+  const body = el("div", { class: "proto-body" }, portRow, details);
+  body.hidden = !p.enabled;
+  return el("div", { class: "glass proto", id: "proto-" + proto },
+    el("div", { class: "head-row" },
+      el("h2", {}, title, el("span", { class: "tag core", text: core })),
+      el("label", { class: "check" }, enabled, "включён")),
+    body);
+}
+
+function portInput(p, hintText) {
+  const hint = el("span", { class: "hint", text: hintText(p.port) });
   const port = el("input", { type: "number", min: 1, max: 65535, value: p.port, class: "num" });
   port.addEventListener("input", () => {
     p.port = Number(port.value);
-    portHint.textContent = portText(p.port);
+    hint.textContent = hintText(p.port);
     dirty();
   });
-  const portHint = el("span", { class: "hint", text: portText(p.port) });
+  return el("label", {}, "Порт", port, hint);
+}
 
+function protoCard(proto, title, fields, extra) {
+  const p = protoData.settings[proto];
+  const r = p.reality;
   const disguise = el("div", { class: "fields" });
   for (const spec of REALITY_FIELDS) {
     const f = field(r, spec, dirty);
@@ -478,17 +507,30 @@ function protoCard(proto, title, fields, extra) {
   }
   const transport = el("div", { class: "fields" });
   for (const spec of fields) transport.append(field(p, spec, dirty));
+  const more = [el("h3", { text: "Маскировка (REALITY)" }), disguise, keysBlock(proto, r), el("h3", { text: "Настройки " + title }), transport];
+  if (extra) more.push(extra(p));
+  return card(proto, title, "Xray", p, portInput(p, portText), more);
+}
 
-  const body = el("div", { class: "proto-body" },
-    el("label", {}, "Порт", port, portHint),
-    el("h3", { text: "Маскировка (REALITY)" }), disguise,
-    keysBlock(proto, r),
-    el("h3", { text: "Настройки " + title }), transport);
-  if (extra) body.append(extra(p));
-  body.hidden = !p.enabled;
-  return el("div", { class: "glass proto", id: "proto-" + proto },
-    el("div", { class: "head-row" }, el("h2", { text: title }), el("label", { class: "check" }, enabled, "включён")),
-    body);
+function tuicCard() {
+  const p = protoData.singbox.tuic;
+  const box = el("div", { class: "fields" });
+  for (const spec of TUIC_FIELDS) box.append(field(p, spec, dirty));
+  const port = portInput(p, tuicPortText);
+  if (!protoData.tuic_cert) {
+    port.append(el("span", { class: "hint warn", text: protoData.domain
+      ? "Ждёт сертификат домена: TUIC появится в подписках, как только Caddy его получит."
+      : "Нужен домен: TUIC работает с сертификатом сайта. Укажите домен на вкладке «Сайт и сертификат»." }));
+  }
+  return card("tuic", "TUIC", "sing-box", p, port, [
+    el("p", { class: "hint", text: "QUIC по UDP с сертификатом сайта " + (protoData.domain || "панели") + ". Пароль у каждого пользователя свой и меняется вместе с «Новыми ссылками»." }),
+    box,
+  ]);
+}
+
+function tuicPortText(port) {
+  if (port !== 443 && port < 1024) return "Можно 443 или от 1024.";
+  return `UDP: номер может совпадать с gRPC, тот работает по TCP. Откройте ${port}/udp в файрволе хостинга, если он там есть.`;
 }
 
 function portText(port) {
@@ -511,6 +553,7 @@ function xmuxBlock(p) {
 function renderProtocols(d) {
   protoData = d;
   unitPill($("pr-xray"), "Xray", d.xray);
+  unitPill($("pr-singbox"), "sing-box", d.singbox_state);
   unitPill($("pr-edge"), "Порт 443", d.edge);
   $("pr-address").value = d.settings.address;
   $("pr-address").placeholder = d.auto_address || "IP сервера";
@@ -518,7 +561,8 @@ function renderProtocols(d) {
   $("scan-form").target.placeholder = (d.auto_address || "IP сервера") + " и соседи";
   $("pr-cards").replaceChildren(
     protoCard("grpc", "gRPC", GRPC_FIELDS),
-    protoCard("xhttp", "XHTTP", XHTTP_FIELDS, xmuxBlock));
+    protoCard("xhttp", "XHTTP", XHTTP_FIELDS, xmuxBlock),
+    tuicCard());
 }
 
 async function loadProtocols() {
@@ -539,11 +583,11 @@ $("pr-reset").addEventListener("click", loadProtocols);
 
 $("pr-save").addEventListener("click", async () => {
   $("pr-save").disabled = true;
-  notice("pr-msg", "Проверяю настройки в Xray и применяю…");
+  notice("pr-msg", "Проверяю настройки и применяю…");
   try {
-    const d = await api("api/protocols", protoData.settings);
+    const d = await api("api/protocols", { ...protoData.settings, singbox: protoData.singbox });
     renderProtocols(d);
-    notice("pr-msg", d.warning || "Сохранено, Xray перезапущен с новыми настройками.", !!d.warning);
+    notice("pr-msg", d.warning || (d.applied ? `Сохранено: ${d.applied}.` : "Изменений нет."), !!d.warning);
   } catch (err) {
     notice("pr-msg", err.message, true);
   } finally {

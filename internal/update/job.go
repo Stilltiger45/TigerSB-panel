@@ -25,12 +25,13 @@ const Repo = "Stilltiger45/TigerSB-panel"
 // Unit runs queued updates and rollbacks outside the panel's cgroup.
 const Unit = "tigersb-update.service"
 
-// Units of the edge router on 443 and the Xray container, restarted after a
-// rollback.
+// Units of the edge router on 443, the subscriptions and the VPN containers,
+// restarted after a rollback.
 const (
-	EdgeUnit = "tigersb-edge.service"
-	SubUnit  = "tigersb-sub.service"
-	XrayUnit = "tigersb-xray.service"
+	EdgeUnit    = "tigersb-edge.service"
+	SubUnit     = "tigersb-sub.service"
+	XrayUnit    = "tigersb-xray.service"
+	SingboxUnit = "tigersb-singbox.service"
 )
 
 // Phases of a job.
@@ -358,9 +359,9 @@ func (u *Updater) restore(ctx context.Context, id string, start bool, log io.Wri
 	if out, err := u.run("systemctl", "restart", service.CaddyUnit); err != nil {
 		return fmt.Errorf("Caddy не перезапустился: %v %s", err, out)
 	}
-	// The edge router, the subscriptions and Xray rebuild their state from
-	// the restored database.
-	for _, name := range []string{EdgeUnit, SubUnit, XrayUnit} {
+	// The edge router, the subscriptions and the VPN cores rebuild their
+	// state from the restored database.
+	for _, name := range []string{EdgeUnit, SubUnit, XrayUnit, SingboxUnit} {
 		if after[name] {
 			if out, err := u.run("systemctl", "enable", name); err != nil {
 				fmt.Fprintf(log, "systemctl enable %s: %v %s\n", name, err, out)

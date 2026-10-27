@@ -53,7 +53,8 @@ const usage = `TigerSB panel
   tigersb update   обновить панель с GitHub (перед этим создаётся точка восстановления)
   tigersb restore  точки восстановления: restore list | restore create | restore apply <имя>
   tigersb monitor  снять показатели и проверить сервер (вызывает таймер раз в 5 минут)
-  tigersb xray     VPN-ядро в Docker: xray status | xray apply
+  tigersb xray     VPN-ядро Xray в Docker (gRPC, XHTTP): xray status | xray apply
+  tigersb singbox  VPN-ядро sing-box в Docker (TUIC): singbox status | singbox apply
   tigersb edge     делить порт 443 между сайтом и VPN (вызывает systemd)
   tigersb sub      выдавать подписки пользователей (вызывает systemd)
   tigersb version  версия
@@ -97,6 +98,8 @@ func main() {
 		err = cmdJob(os.Args[2:])
 	case "xray":
 		err = cmdXray(os.Args[2:])
+	case "singbox":
+		err = cmdSingbox(os.Args[2:])
 	case "edge":
 		err = cmdEdge(os.Args[2:])
 	case "sub":
@@ -301,6 +304,10 @@ func (e *env) apply(published bool) error {
 	// routes add.
 	if err := e.runtime().Sync(context.Background(), e.st, e.set.Domain, false); err != nil {
 		fmt.Fprintln(os.Stderr, "маршруты порта 443:", err)
+	}
+	// TUIC uses the domain's certificate and name.
+	if err := e.singbox().Sync(context.Background(), e.st, e.set.Domain, true); err != nil {
+		fmt.Fprintln(os.Stderr, "sing-box:", err)
 	}
 	if errors.Is(err, site.ErrCaddyDown) {
 		fmt.Println(err)
