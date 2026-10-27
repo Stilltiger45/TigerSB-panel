@@ -250,7 +250,8 @@ start_monitor() {
 }
 
 # check_ports stops a fresh install when another web server holds 80 or 443,
-# and warns when the default gRPC (TCP) or TUIC (UDP) port is taken.
+# and warns when the default gRPC (TCP), TUIC or Hysteria 2 (UDP) port is
+# taken.
 check_ports() {
 	command -v ss >/dev/null || return 0
 	local port who
@@ -262,6 +263,8 @@ check_ports() {
 	[ -z "$who" ] || echo "Внимание: порт 8443 занят ($who). Поменяйте порт gRPC на вкладке «Протоколы»." >&2
 	who="$(ss -lunpH "sport = :8443" 2>/dev/null | grep -v '"sing-box"' | head -n1 || true)"
 	[ -z "$who" ] || echo "Внимание: порт 8443/udp занят ($who). Поменяйте порт TUIC на вкладке «Протоколы»." >&2
+	who="$(ss -lunpH "sport = :443" 2>/dev/null | grep -v '"sing-box"' | head -n1 || true)"
+	[ -z "$who" ] || echo "Внимание: порт 443/udp занят ($who). Поменяйте порт Hysteria 2 на вкладке «Протоколы»." >&2
 }
 
 # install_docker makes sure Docker runs: Xray and sing-box live in containers. It prints

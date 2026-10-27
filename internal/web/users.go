@@ -200,7 +200,7 @@ func (s *Server) sync(ctx context.Context) error {
 
 // live applies a user change to the running cores. Xray takes it without a
 // restart; sing-box has no such API and rereads its config, which stalls
-// TUIC clients for up to 12 s (see singbox.Render). A stopped core reads
+// TUIC and Hysteria 2 clients for up to 12 s (see singbox.Render). A stopped core reads
 // the new config when it starts, so only a running one is told.
 func (s *Server) live(ctx context.Context, f func(xray.Settings) error) string {
 	warning := ""

@@ -64,7 +64,7 @@ type Server struct {
 
 	// Xray is the VPN core in Docker and the edge router on 443.
 	Xray *xray.Runtime
-	// Singbox is the second core, with TUIC.
+	// Singbox is the second core, with TUIC and Hysteria 2.
 	Singbox *singbox.Runtime
 	// LocalIPs lists the server's addresses, for links.
 	LocalIPs func() ([]net.IP, error)
@@ -455,7 +455,7 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 		if err := s.Xray.Sync(r.Context(), s.store, set.Domain, false); err != nil {
 			log.Printf("edge routes: %v", err)
 		}
-		// TUIC goes by the domain and its certificate; the monitor timer
+		// TUIC and Hysteria 2 go by the domain and its certificate; the monitor timer
 		// brings in a certificate Caddy gets later.
 		if err := s.Singbox.Sync(r.Context(), s.store, set.Domain, true); err != nil {
 			log.Printf("sing-box: %v", err)

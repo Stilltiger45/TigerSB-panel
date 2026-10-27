@@ -116,8 +116,8 @@ func LinksFor(domain, pk string, u store.User) *Links {
 }
 
 // prio orders the transports for the client: XHTTP first, then gRPC, then
-// TUIC, whose UDP some networks block.
-var prio = map[string]int{xray.XHTTPTag: 10, xray.GRPCTag: 20, singbox.TUICTag: 30}
+// TUIC and Hysteria 2, whose UDP some networks block.
+var prio = map[string]int{xray.XHTTPTag: 10, xray.GRPCTag: 20, singbox.TUICTag: 30, singbox.Hy2Tag: 40}
 
 // Profile builds the signed profile of a user: one exit (this server) with
 // every enabled protocol of every core.
@@ -172,8 +172,8 @@ type Handler struct {
 	Domain func(ctx context.Context) (string, error)
 	// LocalIPs lists this server's addresses for the links (xray.LocalIPs).
 	LocalIPs func() ([]net.IP, error)
-	// TUICCert reports whether sing-box has the certificate TUIC needs
-	// (singbox.Runtime.HaveCert); nil means it has not.
+	// TUICCert reports whether sing-box has the certificate TUIC and
+	// Hysteria 2 need (singbox.Runtime.HaveCert); nil means it has not.
 	TUICCert func() bool
 	Now      func() time.Time
 }
@@ -305,7 +305,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if sb, err := singbox.Load(ctx, h.Store); err != nil {
 		log.Printf("sub: %v", err)
 	} else {
-		links = append(links, singbox.Links(sb, addr, domain, h.TUICCert != nil && h.TUICCert(), *u)...)
+		cert := h.TUICCert != nil && h.TUICCert()
+		links = append(links, singbox.Links(sb, addr, domain, cert, *u)...)
+		links = append(links, singbox.Hy2Links(sb, addr, domain, cert, *u)...)
 	}
 	if !IsTigerSB(ua) {
 		hdr.Set("Content-Type", "text/plain; charset=utf-8")

@@ -61,6 +61,11 @@ func TestRender(t *testing.T) {
 			} `json:"tls"`
 			CC   string `json:"congestion_control"`
 			Idle string `json:"idle_timeout"`
+			BBR  string `json:"bbr_profile"`
+			Obfs *struct {
+				Type, Password string
+			} `json:"obfs"`
+			Masquerade string `json:"masquerade"`
 		} `json:"inbounds"`
 		Route struct {
 			Rules []map[string]any `json:"rules"`
@@ -72,7 +77,7 @@ func TestRender(t *testing.T) {
 	if conf.Log["disabled"] != true {
 		t.Error("logs must be off")
 	}
-	if len(conf.Inbounds) != 1 {
+	if len(conf.Inbounds) != 2 {
 		t.Fatalf("inbounds: %s", raw)
 	}
 	in := conf.Inbounds[0]
@@ -83,6 +88,26 @@ func TestRender(t *testing.T) {
 	if len(in.Users) != 1 || in.Users[0].Name != "u1" || in.Users[0].Password != s.Password(users()[0].UUID) {
 		t.Errorf("users: %+v", in.Users)
 	}
+	hy := conf.Inbounds[1]
+	if hy.Type != "hysteria2" || hy.ListenPort != 443 || hy.BBR != "standard" || hy.Idle != "12s" || hy.TLS.ServerName != "vpn.example.com" ||
+		hy.Obfs == nil || hy.Obfs.Type != "salamander" || hy.Obfs.Password != s.Hysteria2.ObfsPassword || len(hy.Obfs.Password) != 24 || hy.Masquerade != "" {
+		t.Errorf("hysteria2: %s", raw)
+	}
+	if len(hy.Users) != 1 || hy.Users[0].Name != "u1" || hy.Users[0].Password != s.Hy2Password(users()[0].UUID) {
+		t.Errorf("hysteria2 users: %+v", hy.Users)
+	}
+	if strings.Contains(string(raw), "up_mbps") {
+		t.Errorf("speeds without settings: %s", raw)
+	}
+	// Without Salamander strangers who speak HTTP/3 see the site.
+	plain := s
+	plain.Hysteria2.Obfs = false
+	plain.Hysteria2.UpMbps, plain.Hysteria2.DownMbps = 100, 50
+	raw2, _ := Render(plain, users(), "vpn.example.com", true)
+	if strings.Contains(string(raw2), "salamander") || !strings.Contains(string(raw2), `"masquerade": "https://vpn.example.com"`) ||
+		!strings.Contains(string(raw2), `"up_mbps": 100`) || !strings.Contains(string(raw2), `"down_mbps": 50`) {
+		t.Errorf("hysteria2 without salamander: %s", raw2)
+	}
 	if !strings.Contains(string(raw), `"ip_is_private": true`) {
 		t.Errorf("private addresses are not refused: %s", raw)
 	}
@@ -92,13 +117,13 @@ func TestRender(t *testing.T) {
 		cert   bool
 		on     bool
 	}{{"", true, true}, {"vpn.example.com", false, true}, {"vpn.example.com", true, false}} {
-		s.TUIC.Enabled = tc.on
+		s.TUIC.Enabled, s.Hysteria2.Enabled = tc.on, tc.on
 		raw, _ := Render(s, users(), tc.domain, tc.cert)
-		if strings.Contains(string(raw), `"tuic"`) {
-			t.Errorf("%+v: TUIC served: %s", tc, raw)
+		if strings.Contains(string(raw), `"tuic"`) || strings.Contains(string(raw), `"hysteria2"`) {
+			t.Errorf("%+v: served: %s", tc, raw)
 		}
-		if Links(s, "203.0.113.7", tc.domain, tc.cert, users()[0]) != nil {
-			t.Errorf("%+v: link without TUIC", tc)
+		if Links(s, "203.0.113.7", tc.domain, tc.cert, users()[0]) != nil || Hy2Links(s, "203.0.113.7", tc.domain, tc.cert, users()[0]) != nil {
+			t.Errorf("%+v: link without the protocol", tc)
 		}
 	}
 }
@@ -143,6 +168,60 @@ func TestLinkForClient(t *testing.T) {
 	}
 }
 
+// The Hysteria 2 link must be one the TigerSB client reads into an outbound
+// with Salamander.
+func TestHy2LinkForClient(t *testing.T) {
+	s := defaults(t)
+	s.Hysteria2.ObfsPassword = "pa ss&word+1"
+	u := users()[0]
+	links := Hy2Links(s, "2001:db8::7", "vpn.example.com", true, u)
+	if len(links) != 1 || links[0].Protocol != "hysteria2" || links[0].Title != "Мама · Hysteria 2" {
+		t.Fatalf("links: %+v", links)
+	}
+	raw, name, err := profile.ParseLink(links[0].URL)
+	if err != nil || name != "Мама · Hysteria 2" {
+		t.Fatalf("client rejects %s: %v", links[0].URL, err)
+	}
+	var out struct {
+		Protocol string `json:"protocol"`
+		Settings struct {
+			Address string
+			Port    int
+		} `json:"settings"`
+		Stream struct {
+			TLS struct {
+				ServerName    string
+				AllowInsecure bool
+			} `json:"tlsSettings"`
+			Hy struct {
+				Auth string
+			} `json:"hysteriaSettings"`
+			Mask struct {
+				UDP []struct {
+					Type     string
+					Settings struct{ Password string }
+				}
+			} `json:"finalmask"`
+		} `json:"streamSettings"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Protocol != "hysteria" || out.Settings.Address != "2001:db8::7" || out.Settings.Port != 443 || out.Stream.Hy.Auth != s.Hy2Password(u.UUID) {
+		t.Errorf("outbound: %s", raw)
+	}
+	if out.Stream.TLS.ServerName != "vpn.example.com" || out.Stream.TLS.AllowInsecure {
+		t.Errorf("tls: %s", raw)
+	}
+	if m := out.Stream.Mask.UDP; len(m) != 1 || m[0].Type != "salamander" || m[0].Settings.Password != "pa ss&word+1" {
+		t.Errorf("salamander: %s", raw)
+	}
+	s.Hysteria2.Obfs = false
+	if l := Hy2Links(s, "203.0.113.7", "vpn.example.com", true, u); strings.Contains(l[0].URL, "obfs") {
+		t.Errorf("salamander off, link %s", l[0].URL)
+	}
+}
+
 func TestPasswordAndValidate(t *testing.T) {
 	s := defaults(t)
 	a, b := s.Password(users()[0].UUID), s.Password(users()[1].UUID)
@@ -161,16 +240,34 @@ func TestPasswordAndValidate(t *testing.T) {
 		func(s *Settings) { s.TUIC.Heartbeat = -1 },
 		func(s *Settings) { s.TUIC.AuthTimeout = 0 },
 		func(s *Settings) { s.Secret = "" },
+		func(s *Settings) { s.Hysteria2.Port = 80 },
+		func(s *Settings) { s.TUIC.Port = 443 }, // Hysteria 2 has UDP 443
+		func(s *Settings) { s.Hysteria2.ObfsPassword = "short" },
+		func(s *Settings) { s.Hysteria2.BBRProfile = "fast" },
+		func(s *Settings) { s.Hysteria2.UpMbps = 100 },
+		func(s *Settings) { s.Hysteria2.UpMbps, s.Hysteria2.DownMbps = -1, -1 },
+		func(s *Settings) {
+			s.Hysteria2.UpMbps, s.Hysteria2.DownMbps, s.Hysteria2.IgnoreClientBandwidth = 100, 100, true
+		},
 	} {
 		c := defaults(t)
 		mut(&c)
 		if c.Validate() == nil {
-			t.Errorf("accepted %+v", c.TUIC)
+			t.Errorf("accepted %+v %+v", c.TUIC, c.Hysteria2)
 		}
 	}
+	// TUIC may take UDP 443 once Hysteria 2 moves away or is off.
 	s.TUIC.Port = 443
+	s.Hysteria2.Enabled = false
 	if err := s.Validate(); err != nil {
 		t.Error(err)
+	}
+	s.Hysteria2.Enabled, s.Hysteria2.Port = true, 8444
+	if err := s.Validate(); err != nil {
+		t.Error(err)
+	}
+	if s.Hy2Password(users()[0].UUID) == a {
+		t.Error("TUIC and Hysteria 2 share a password")
 	}
 }
 
@@ -188,6 +285,36 @@ func TestLoadKeepsSecret(t *testing.T) {
 	b, _ := Load(ctx, st)
 	if a.Secret == "" || a.Secret != b.Secret || !a.TUIC.Enabled || a.TUIC.Port != 8443 {
 		t.Fatalf("%+v %+v", a, b)
+	}
+	if !a.Hysteria2.Enabled || a.Hysteria2.Port != 443 || !a.Hysteria2.Obfs || a.Hysteria2.ObfsPassword == "" || a.Hysteria2.ObfsPassword != b.Hysteria2.ObfsPassword {
+		t.Fatalf("hysteria2: %+v %+v", a.Hysteria2, b.Hysteria2)
+	}
+}
+
+// Settings stored before Hysteria 2 existed get it switched on, with the
+// same Salamander password in every process that loads them.
+func TestLoadAddsHysteria2(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "panel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	old := `{"secret":"` + strings.Repeat("s", 43) + `","tuic":{"enabled":true,"port":8443,"congestion_control":"bbr","udp_relay_mode":"native","heartbeat":10,"auth_timeout":3}}`
+	if err := st.SetSettings(ctx, map[string]string{Key: old}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := Load(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := Load(ctx, st)
+	h := a.Hysteria2
+	if !h.Enabled || h.Port != 443 || !h.Obfs || h.BBRProfile != "standard" || h.ObfsPassword == "" || h.ObfsPassword != b.Hysteria2.ObfsPassword {
+		t.Fatalf("%+v", h)
+	}
+	if err := a.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 

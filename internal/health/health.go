@@ -219,28 +219,51 @@ func listeningUDP(port int) bool {
 }
 
 func checkSingbox(ctx context.Context, e Env, set site.Settings) Result {
-	r := Result{ID: "singbox", Title: "sing-box (TUIC)"}
+	r := Result{ID: "singbox", Title: "sing-box (TUIC, Hysteria 2)"}
 	sb, err := singbox.Load(ctx, e.Store)
 	if err != nil {
 		r.State, r.Detail = Fail, err.Error()
 		return r
 	}
+	type proto struct {
+		name string
+		port int
+	}
+	var on []proto
+	if sb.TUIC.Enabled {
+		on = append(on, proto{"TUIC", sb.TUIC.Port})
+	}
+	if sb.Hysteria2.Enabled {
+		on = append(on, proto{"Hysteria 2", sb.Hysteria2.Port})
+	}
+	var names, ports []string
+	for _, p := range on {
+		names = append(names, p.name)
+		ports = append(ports, p.name+" :"+strconv.Itoa(p.port)+"/udp")
+	}
+	these := strings.Join(names, " и ")
 	state := service.UnitState(e.Run, singbox.Unit)
-	port := strconv.Itoa(sb.TUIC.Port)
 	switch {
 	case state != "active":
-		r.State, r.Detail = Fail, fmt.Sprintf("Контейнер не работает (%s): TUIC недоступен. Подробности: journalctl -u %s", state, singbox.Unit)
-	case !sb.TUIC.Enabled:
-		r.State, r.Detail = Off, "Работает, TUIC выключен."
+		r.State, r.Detail = Fail, fmt.Sprintf("Контейнер не работает (%s): TUIC и Hysteria 2 недоступны. Подробности: journalctl -u %s", state, singbox.Unit)
+		return r
+	case len(on) == 0:
+		r.State, r.Detail = Off, "Работает, TUIC и Hysteria 2 выключены."
+		return r
 	case set.Domain == "":
-		r.State, r.Detail = Warn, "TUIC ждёт домен: задайте его на вкладке «Сайт и сертификат»."
+		r.State, r.Detail = Warn, these+" ждут домен: задайте его на вкладке «Сайт и сертификат»."
+		return r
 	case !e.TUICCert():
-		r.State, r.Detail = Warn, "TUIC ждёт сертификат домена: Caddy ещё не получил его."
-	case !e.ListeningUDP(sb.TUIC.Port):
-		r.State, r.Detail = Fail, "Не слушает UDP "+port+". Подробности: journalctl -u "+singbox.Unit
-	default:
-		r.State, r.Detail = OK, "Работает: TUIC :"+port+"/udp. Порт должен быть открыт для UDP в файрволе и у хостера."
+		r.State, r.Detail = Warn, these+" ждут сертификат домена: Caddy ещё не получил его."
+		return r
 	}
+	for _, p := range on {
+		if !e.ListeningUDP(p.port) {
+			r.State, r.Detail = Fail, fmt.Sprintf("%s не слушает UDP %d. Подробности: journalctl -u %s", p.name, p.port, singbox.Unit)
+			return r
+		}
+	}
+	r.State, r.Detail = OK, "Работает: "+strings.Join(ports, ", ")+". Порты должны быть открыты для UDP в файрволе и у хостера."
 	return r
 }
 

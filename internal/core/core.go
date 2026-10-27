@@ -1,9 +1,10 @@
 // Package core holds what the VPN cores share. Each core runs in its own
 // Docker container with the host network: Xray-core (package xray) carries
-// VLESS over gRPC and XHTTP, sing-box (package singbox) carries TUIC. A new
-// protocol goes into the core that supports it; a new core gets a package
-// of its own with the same shape: settings, a config renderer, a runtime
-// with Test, Sync and the `docker run` arguments, and share links.
+// VLESS over gRPC and XHTTP, sing-box (package singbox) carries TUIC and
+// Hysteria 2. A new protocol goes into the core that supports it; a new core
+// gets a package of its own with the same shape: settings, a config
+// renderer, a runtime with Test, Sync and the `docker run` arguments, and
+// share links.
 package core
 
 import (
@@ -51,7 +52,7 @@ func Tail(out string, n int) string {
 
 // Link is one ready-to-import connection of a user.
 type Link struct {
-	Protocol string `json:"protocol"` // grpc, xhttp or tuic
+	Protocol string `json:"protocol"` // grpc, xhttp, tuic or hysteria2
 	Title    string `json:"title"`
 	URL      string `json:"url"`
 }

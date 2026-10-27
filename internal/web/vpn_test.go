@@ -365,6 +365,39 @@ func TestProtocolsSaveTUIC(t *testing.T) {
 	}
 }
 
+// Hysteria 2 comes on by itself with Salamander; a cleared password gets a
+// new one from the secret, and TUIC and Hysteria 2 cannot share a UDP port.
+func TestProtocolsSaveHysteria2(t *testing.T) {
+	s, _, c := vpnServer(t)
+	w := do(s, http.MethodGet, "/"+secret+"/api/protocols", "", c)
+	var p protocolsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	h := p.Singbox.Hysteria2
+	if !h.Enabled || h.Port != 443 || !h.Obfs || len(h.ObfsPassword) < 8 || len(p.BBRProfiles) != 3 {
+		t.Fatalf("get: %s", w.Body)
+	}
+	save := func(sb singbox.Settings) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]any{"address": p.Settings.Address, "grpc": p.Settings.GRPC, "xhttp": p.Settings.XHTTP, "singbox": sb})
+		return do(s, http.MethodPost, "/"+secret+"/api/protocols", string(body), c)
+	}
+	sb := p.Singbox
+	sb.Hysteria2.ObfsPassword = ""
+	sb.Hysteria2.BBRProfile = "aggressive"
+	if w := save(sb); w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body)
+	}
+	after, _ := singbox.Load(context.Background(), s.store)
+	if after.Hysteria2.ObfsPassword != h.ObfsPassword || after.Hysteria2.BBRProfile != "aggressive" {
+		t.Fatalf("stored: %+v", after.Hysteria2)
+	}
+	sb.Hysteria2.Port = sb.TUIC.Port
+	if w := save(sb); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "разные порты") {
+		t.Fatalf("same UDP port: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestCoreRestart(t *testing.T) {
 	s, f, c := vpnServer(t)
 	old := coreSettle

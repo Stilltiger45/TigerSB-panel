@@ -361,3 +361,5 @@ table.scan .row { flex-wrap: nowrap; }
 .port-line { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
 .port-line label.check { font-weight: 600; }
 .port-row .label { font-size: 0.9rem; color: var(--muted); }
+/* Four protocol cards sit two by two. */
+#pr-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }

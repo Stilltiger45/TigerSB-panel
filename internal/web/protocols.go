@@ -19,9 +19,10 @@ import (
 
 type protocolsResponse struct {
 	Settings xray.Settings `json:"settings"`
-	// Singbox holds TUIC; its secret is left out.
+	// Singbox holds TUIC and Hysteria 2; its secret is left out.
 	Singbox singbox.Settings `json:"singbox"`
-	// TUICCert tells whether sing-box has the domain's certificate yet.
+	// TUICCert tells whether sing-box has the domain's certificate yet,
+	// which TUIC and Hysteria 2 need.
 	TUICCert     bool           `json:"tuic_cert"`
 	AutoAddress  string         `json:"auto_address"`
 	Domain       string         `json:"domain"`
@@ -31,6 +32,7 @@ type protocolsResponse struct {
 	Reserved     map[int]string `json:"reserved"`
 	Congestion   []string       `json:"congestion_controls"`
 	RelayModes   []string       `json:"udp_relay_modes"`
+	BBRProfiles  []string       `json:"bbr_profiles"`
 	Xray         string         `json:"xray"`
 	SingboxState string         `json:"singbox_state"`
 	Edge         string         `json:"edge"`
@@ -82,6 +84,7 @@ func (s *Server) protocolsState(ctx context.Context) (*protocolsResponse, error)
 		Reserved:     xray.Reserved(s.panelPort()),
 		Congestion:   singbox.CongestionControls,
 		RelayModes:   singbox.UDPRelayModes,
+		BBRProfiles:  singbox.BBRProfiles,
 		Xray:         s.xrayState(),
 		SingboxState: service.UnitState(s.Run, singbox.Unit),
 		Edge:         service.UnitState(s.Run, xray.EdgeUnit),
@@ -148,7 +151,7 @@ func (s *Server) handleProtocols(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Each core restarts only when its own settings changed, so tuning TUIC
-	// keeps Xray's connections and the other way round.
+	// or Hysteria 2 keeps Xray's connections and the other way round.
 	xrayChanged, sbChanged := !sameJSON(set, oldSet), !sameJSON(sb, oldSB)
 	users, err := s.store.Users(ctx)
 	if err != nil {
