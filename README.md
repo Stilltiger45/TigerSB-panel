@@ -43,7 +43,7 @@ It is made for the [TigerSB-client](https://github.com/Stilltiger45/TigerSB-clie
 - **Hidden panel.** It opens only on a secret path of your domain; every other address shows a harmless "Maintenance" page (four templates: bakery, photo blog, garden diary, book club). `tigersb close` hides the secret path too, and only `tigersb open` over SSH brings it back.
 - **Users in two clicks.** A name and a device count. Each user gets a `tigersb://` key and an `https://` subscription, both with a QR code. New users connect without restarting Xray, so nobody else is dropped.
 - **Device limit.** Devices are counted by HWID when they fetch the subscription, and over the limit no subscription is given out. The list shows model, OS, app, IP and last update, and a button removes a device.
-- **Three protocols in two containers.** Xray carries VLESS + REALITY over XHTTP and gRPC; port 443 is shared by the site and the protocols, and the server tells connections apart by SNI. sing-box carries TUIC v5 (QUIC over UDP 8443) with the site's real Let's Encrypt certificate. Each protocol card shows only its port; the rest folds away under "All settings", and every field is editable. The core checks the config before it is applied. A scanner finds SNI candidates for REALITY among the server's neighbours. A new protocol goes into the core that supports it.
+- **Four protocols in two containers.** Xray carries VLESS + REALITY over XHTTP and gRPC; port 443 is shared by the site and the protocols, and the server tells connections apart by SNI. sing-box carries TUIC v5 (QUIC over UDP 8443) and Hysteria 2 (UDP 443, Salamander obfuscation with an automatic password) with the site's real Let's Encrypt certificate. Each protocol card shows only its port; the rest folds away under "All settings", and every field is editable. The core checks the config before it is applied. A scanner finds SNI candidates for REALITY among the server's neighbours. A new protocol goes into the core that supports it.
 - **Protected subscriptions.** The TigerSB profile is signed with Ed25519, so nobody on the way can swap the servers. A wrong token returns the same maintenance page with the same headers as any other page of the site. Subscriptions keep working while the panel is closed or asleep.
 - **Server control.** CPU, memory, disk and network charts for 6 hours, a day or a week. Health checks for services, certificate, domain, disk space, clock and database, each with a hint on what to do.
 - **One-button update.** A restore point is made first, and if the new version does not start, the panel rolls back by itself and says why.
@@ -55,7 +55,7 @@ Coming next: a cascade through a routing point in Russia (gRPC and TUIC), XHTTP 
 | Component | Role | License |
 |---|---|---|
 | [Xray-core](https://github.com/XTLS/Xray-core) 26.9.30 | VPN core: VLESS + REALITY, XHTTP, gRPC. Official image in Docker, pinned by digest | MPL-2.0 |
-| [sing-box](https://github.com/SagerNet/sing-box) 1.14.4 | second VPN core: TUIC v5. Official image in Docker, pinned by digest | GPL-3.0-or-later |
+| [sing-box](https://github.com/SagerNet/sing-box) 1.14.4 | second VPN core: TUIC v5 and Hysteria 2. Official image in Docker, pinned by digest | GPL-3.0-or-later |
 | [Caddy](https://caddyserver.com) 2.11.4 | maintenance site, Let's Encrypt certificate, panel and subscription routes | Apache-2.0 |
 | [Docker](https://www.docker.com) | runs Xray and sing-box without privileges on a read-only file system | Apache-2.0 |
 | [Go](https://go.dev) 1.26 | the panel, the port 443 splitter, the subscription service, metrics | BSD-3-Clause |
@@ -78,7 +78,7 @@ The installer asks for:
 
 At the end it prints the panel address, `https://<domain>/<secret path>/`. Keep it; `tigersb info` on the server shows it again. Building from source takes a couple of minutes.
 
-If your hosting has its own firewall, open ports 443 and 8443 for TCP and 8443 for UDP (TUIC) there.
+If your hosting has its own firewall, open ports 443 and 8443 for TCP and 443 and 8443 for UDP (Hysteria 2 and TUIC) there.
 
 ## First steps
 
@@ -117,7 +117,7 @@ curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scr
 | `tigersb restore apply <name>` | roll back to a restore point |
 | `tigersb xray status` | Xray and port 443 state, protocols and user count |
 | `tigersb xray apply` | rebuild the Xray config from the database, test it and restart |
-| `tigersb singbox status` | sing-box state and the TUIC port |
+| `tigersb singbox status` | sing-box state and the TUIC and Hysteria 2 ports |
 | `tigersb singbox apply` | rebuild the sing-box config and certificate copy, test them and restart |
 | `tigersb monitor` | take metrics and run health checks now (a timer does this every 5 minutes) |
 

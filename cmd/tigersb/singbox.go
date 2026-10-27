@@ -92,6 +92,19 @@ func cmdSingbox(args []string) error {
 		default:
 			fmt.Printf("TUIC: порт %d/udp, SNI %s\n", s.TUIC.Port, e.set.Domain)
 		}
+		h := s.Hysteria2
+		obfs := "без Salamander"
+		if h.Obfs {
+			obfs = "Salamander"
+		}
+		switch {
+		case !h.Enabled:
+			fmt.Println("Hysteria 2: выключен")
+		case !singbox.ServingHy2(s, e.set.Domain, rt.HaveCert()):
+			fmt.Printf("Hysteria 2: порт %d/udp, ждёт домен и сертификат\n", h.Port)
+		default:
+			fmt.Printf("Hysteria 2: порт %d/udp, SNI %s, %s\n", h.Port, e.set.Domain, obfs)
+		}
 		return nil
 	}
 	e.st.Close()

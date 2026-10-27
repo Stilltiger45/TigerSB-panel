@@ -315,6 +315,13 @@ const TUIC_FIELDS = [
   { key: "auth_timeout", label: "Ждать вход клиента, с (auth_timeout)", kind: "num" },
 ];
 
+const HY2_FIELDS = [
+  { key: "bbr_profile", label: "Профиль BBR", kind: "select", options: "bbr_profiles", hint: "standard — обычный, conservative — бережнее к каналу, aggressive — быстрее набирает скорость." },
+  { key: "up_mbps", label: "Канал сервера на отдачу, Мбит/с", kind: "num", hint: "0 — скорость подбирает BBR. С обеими скоростями клиент, который сообщает свою, получает режим Brutal." },
+  { key: "down_mbps", label: "Канал сервера на приём, Мбит/с", kind: "num" },
+  { key: "ignore_client_bandwidth", label: "Всегда BBR, скорость клиента не слушать", kind: "bool", hint: "Не вместе со скоростями сервера." },
+];
+
 const XMUX_FIELDS = [
   { key: "max_concurrency", label: "Потоков на соединение (maxConcurrency)", kind: "range", hint: "Или это, или maxConnections." },
   { key: "max_connections", label: "Соединений (maxConnections)", kind: "range" },
@@ -534,15 +541,75 @@ function tuicCard() {
   const box = el("div", { class: "fields" });
   for (const spec of TUIC_FIELDS) box.append(field(p, spec, dirty));
   const port = portInput(p, tuicPortText);
-  if (!protoData.tuic_cert) {
-    port.append(el("span", { class: "hint warn", text: protoData.domain
-      ? "Ждёт сертификат домена: TUIC появится в подписках, как только Caddy его получит."
-      : "Нужен домен: TUIC работает с сертификатом сайта. Укажите домен на вкладке «Сайт и сертификат»." }));
-  }
+  certHint(port, "TUIC");
   return card("tuic", "TUIC", "sing-box", p, port, [
     el("p", { class: "hint", text: "QUIC по UDP с сертификатом сайта " + (protoData.domain || "панели") + ". Пароль у каждого пользователя свой и меняется вместе с «Новыми ссылками»." }),
     box,
   ]);
+}
+
+function certHint(row, name) {
+  if (protoData.tuic_cert) return;
+  row.append(el("span", { class: "hint warn", text: protoData.domain
+    ? `Ждёт сертификат домена: ${name} появится в подписках, как только Caddy его получит.`
+    : `Нужен домен: ${name} работает с сертификатом сайта. Укажите домен на вкладке «Сайт и сертификат».` }));
+}
+
+// hy2Card is Hysteria 2 with the Salamander switch next to the port.
+function hy2Card() {
+  const p = protoData.singbox.hysteria2;
+  const hint = el("span", { class: "hint", text: hy2PortText(p.port) });
+  const port = el("input", { type: "number", min: 1, max: 65535, value: p.port, class: "num", "aria-label": "Порт" });
+  port.addEventListener("input", () => {
+    p.port = Number(port.value);
+    hint.textContent = hy2PortText(p.port);
+    dirty();
+  });
+  const obfs = el("input", { type: "checkbox" });
+  obfs.checked = !!p.obfs;
+  const pass = el("input", { value: p.obfs_password, autocomplete: "off", spellcheck: "false" });
+  const passRow = el("label", { class: "wide" },
+    el("span", {}, "Пароль Salamander", el("span", { class: "tag", text: "клиент" })), pass,
+    el("span", { class: "hint", text: "Создаётся сам. Пусто — вернётся исходный. Клиенты получат новый пароль при обновлении подписки." }),
+    el("div", { class: "row" }, el("button", {
+      type: "button", class: "ghost small", text: "Новый пароль",
+      onclick: () => {
+        const b = new Uint8Array(18);
+        crypto.getRandomValues(b);
+        pass.value = p.obfs_password = btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_");
+        dirty();
+      },
+    })));
+  passRow.hidden = !p.obfs;
+  pass.addEventListener("input", () => {
+    p.obfs_password = pass.value.trim();
+    dirty();
+  });
+  obfs.addEventListener("change", () => {
+    p.obfs = obfs.checked;
+    passRow.hidden = !p.obfs;
+    dirty();
+  });
+  const row = el("div", { class: "port-row" },
+    el("span", { class: "label" }, "Порт"),
+    el("div", { class: "port-line" }, port, el("label", { class: "check" }, obfs, "Salamander")),
+    hint,
+    el("span", { class: "hint", text: "Salamander перемешивает каждый пакет: снаружи это не похоже на QUIC и HTTP/3." }));
+  certHint(row, "Hysteria 2");
+  const box = el("div", { class: "fields" }, passRow);
+  for (const spec of HY2_FIELDS) box.append(field(p, spec, dirty));
+  return card("hysteria2", "Hysteria 2", "sing-box", p, row, [
+    el("p", { class: "hint", text: "QUIC по UDP с сертификатом сайта " + (protoData.domain || "панели") + " и управлением скоростью Hysteria. Пароль у каждого пользователя свой и меняется вместе с «Новыми ссылками». Без Salamander посторонний, который придёт по HTTP/3, увидит сайт-заглушку." }),
+    box,
+  ]);
+}
+
+function hy2PortText(port) {
+  if (port !== 443 && port < 1024) return "Можно 443 или от 1024.";
+  const tuic = protoData.singbox.tuic;
+  if (tuic.enabled && tuic.port === port) return "Занят TUIC: оба протокола работают по UDP, выберите другой порт.";
+  const free = port === 443 ? "Сайт и Xray на 443 работают по TCP, UDP свободен. " : "";
+  return `${free}Откройте ${port}/udp в файрволе хостинга, если он там есть.`;
 }
 
 function tuicPortText(port) {
@@ -579,7 +646,8 @@ function renderProtocols(d) {
   $("pr-cards").replaceChildren(
     protoCard("grpc", "gRPC", GRPC_FIELDS),
     protoCard("xhttp", "XHTTP", XHTTP_FIELDS, xmuxBlock),
-    tuicCard());
+    tuicCard(),
+    hy2Card());
 }
 
 async function loadProtocols() {

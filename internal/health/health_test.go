@@ -38,7 +38,7 @@ func newWorld(t *testing.T) *world {
 		"tigersb-edge.service": "active", "tigersb-xray.service": "active",
 		"tigersb-sub.service": "active", "tigersb-singbox.service": "active",
 	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true, 10086: true},
-		udp: map[int]bool{8443: true}, cert: true}
+		udp: map[int]bool{8443: true, 443: true}, cert: true}
 	caddy := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if w.routed && strings.HasPrefix(r.URL.Path, "/"+secret+"/") {
 			rw.Header().Set("Content-Security-Policy", "default-src 'self'; form-action 'self'")
@@ -207,12 +207,24 @@ func TestSingbox(t *testing.T) {
 	w.cert = false
 	check(Warn, "no certificate yet")
 	w.cert = true
+	r, _ := Run(ctx, w.env)
+	for _, res := range r.Results {
+		if res.ID == "singbox" && !strings.Contains(res.Detail, "TUIC :8443/udp, Hysteria 2 :443/udp") {
+			t.Errorf("detail: %s", res.Detail)
+		}
+	}
+	w.udp[443] = false
+	check(Fail, "UDP 443 not bound")
+	w.udp[443] = true
 	w.udp[8443] = false
 	check(Fail, "UDP 8443 not bound")
 	s, _ := singbox.Load(ctx, w.env.Store)
 	s.TUIC.Enabled = false
 	singbox.Save(ctx, w.env.Store, s)
-	check(Off, "TUIC off")
+	check(OK, "TUIC off, Hysteria 2 on")
+	s.Hysteria2.Enabled = false
+	singbox.Save(ctx, w.env.Store, s)
+	check(Off, "both off")
 	w.units["tigersb-singbox.service"] = "failed"
 	check(Fail, "container down")
 }

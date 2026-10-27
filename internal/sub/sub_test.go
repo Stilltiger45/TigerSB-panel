@@ -200,8 +200,9 @@ func TestSigningKeyStays(t *testing.T) {
 	}
 }
 
-// With sing-box holding the certificate, TUIC joins both subscriptions.
-func TestTUICInSubscriptions(t *testing.T) {
+// With sing-box holding the certificate, TUIC and Hysteria 2 join both
+// subscriptions.
+func TestSingboxInSubscriptions(t *testing.T) {
 	h, st, u := setup(t)
 	h.TUICCert = func() bool { return true }
 	w := get(h, http.MethodGet, "/sub/"+u.SubToken, "TigerSB-android/0.1", "hw1")
@@ -216,13 +217,20 @@ func TestTUICInSubscriptions(t *testing.T) {
 		t.Errorf("name %q, title %q", p.Name, w.Header().Get("Profile-Title"))
 	}
 	tr := p.Exits[0].Transports
-	if len(tr) != 3 || tr[2].ID != "tuic" || tr[2].Prio != 30 || !strings.Contains(string(tr[2].Xray), `"serverName":"vpn.example.com"`) {
+	if len(tr) != 4 || tr[2].ID != "tuic" || tr[2].Prio != 30 || !strings.Contains(string(tr[2].Xray), `"serverName":"vpn.example.com"`) {
 		t.Fatalf("transports: %+v", tr)
+	}
+	// Hysteria 2 reaches the client with Salamander and its password.
+	if hy := string(tr[3].Xray); tr[3].ID != "hysteria2" || tr[3].Prio != 40 || !strings.Contains(hy, `"type":"salamander"`) || !strings.Contains(hy, `"port":443`) {
+		t.Fatalf("hysteria2: %s", tr[3].Xray)
 	}
 	w = get(h, http.MethodGet, "/sub/"+u.SubToken, "Hiddify/2.0", "hw1")
 	raw, _ := base64.StdEncoding.DecodeString(w.Body.String())
 	lines := strings.Split(string(raw), "\n")
-	if len(lines) != 3 || !strings.HasPrefix(lines[2], "tuic://"+u.UUID+":") || !strings.Contains(lines[2], "sni=vpn.example.com") {
+	if len(lines) != 4 || !strings.HasPrefix(lines[2], "tuic://"+u.UUID+":") || !strings.Contains(lines[2], "sni=vpn.example.com") {
 		t.Fatalf("links: %q", lines)
+	}
+	if !strings.HasPrefix(lines[3], "hysteria2://") || !strings.Contains(lines[3], "@vpn.example.com:443/?sni=vpn.example.com&obfs=salamander&obfs-password=") {
+		t.Fatalf("hysteria2 link: %q", lines[3])
 	}
 }
