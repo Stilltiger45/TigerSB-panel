@@ -22,6 +22,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
+	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
@@ -130,6 +131,7 @@ func Run(ctx context.Context, e Env) (*Report, error) {
 	add(checkUpdate(ctx, e))
 	add(checkPoints(e))
 	add(checkEdge(e))
+	add(checkSub(e, set))
 	add(checkXray(ctx, e))
 	add(Result{ID: "singbox", Title: "sing-box (TUIC)", State: Soon, Detail: "Появится вместе с TUIC."})
 	add(Result{ID: "routers", Title: "Точки маршрутизации", State: Soon, Detail: "Появятся вместе с каскадом: панель будет проверять каждую по SSH."})
@@ -151,6 +153,22 @@ func checkEdge(e Env) Result {
 		r.State, r.Detail = OK, "Работает: делит порт 443 по SNI между сайтом и VPN."
 	} else {
 		r.State, r.Detail = Fail, fmt.Sprintf("Служба в состоянии %s: сайт, сертификат и протоколы на 443 недоступны. Подробности: journalctl -u %s", state, xray.EdgeUnit)
+	}
+	return r
+}
+
+func checkSub(e Env, set site.Settings) Result {
+	r := Result{ID: "sub", Title: "Подписки"}
+	state := service.UnitState(e.Run, sub.Unit)
+	switch {
+	case state != "active":
+		r.State, r.Detail = Fail, fmt.Sprintf("Служба в состоянии %s: клиенты не получат подписку и новые устройства не подключатся. Подробности: journalctl -u %s", state, sub.Unit)
+	case e.Listening != nil && !e.Listening(site.SubPort):
+		r.State, r.Detail = Fail, fmt.Sprintf("Служба не слушает порт %d. Подробности: journalctl -u %s", site.SubPort, sub.Unit)
+	case set.Domain == "":
+		r.State, r.Detail = Warn, "Подпискам нужен домен с сертификатом: задайте его на вкладке «Сайт и сертификат»."
+	default:
+		r.State, r.Detail = OK, "Работают: https://"+set.Domain+site.SubPrefix+"…, неверный адрес показывает заглушку."
 	}
 	return r
 }

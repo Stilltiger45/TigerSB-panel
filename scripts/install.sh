@@ -216,7 +216,7 @@ main_sha() {
 	fi
 }
 
-UNITS="tigersb.service tigersb-caddy.service tigersb-edge.service tigersb-xray.service tigersb-monitor.service tigersb-monitor.timer tigersb-update.service"
+UNITS="tigersb.service tigersb-caddy.service tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-monitor.service tigersb-monitor.timer tigersb-update.service"
 
 install_unit() {
 	local src name
@@ -272,12 +272,13 @@ install_docker() {
 	systemctl enable --now docker.service >&2 || return 1
 }
 
-# start_vpn starts the edge router on 443 and Xray in Docker. Run it after
-# start_site: with a domain Caddy moves to 127.0.0.1:8444 and frees 443.
+# start_vpn starts the edge router on 443, the subscriptions and Xray in
+# Docker. Run it after start_site: with a domain Caddy moves to
+# 127.0.0.1:8444, frees 443 and already reads the edge's PROXY header.
 start_vpn() {
 	install -d -m 0700 "$DATA_DIR/edge" "$DATA_DIR/docker"
-	systemctl enable tigersb-edge.service tigersb-xray.service
-	systemctl restart tigersb-edge.service
+	systemctl enable tigersb-edge.service tigersb-sub.service tigersb-xray.service
+	systemctl restart tigersb-edge.service tigersb-sub.service
 	if install_docker; then
 		local image
 		image="$("$BIN" xray image)"

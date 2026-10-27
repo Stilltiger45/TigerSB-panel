@@ -16,6 +16,7 @@ TigerSB-panel распространяется под [GPL-3.0](LICENSE). Ниж
 | [github.com/remyoudompheng/bigfft](https://github.com/remyoudompheng/bigfft) | BSD-3-Clause | зависимость SQLite |
 | [github.com/dustin/go-humanize](https://github.com/dustin/go-humanize) | MIT | зависимость SQLite |
 | [rsc.io/qr](https://github.com/rsc/qr) | BSD-3-Clause | QR-коды ссылок пользователей |
+| [TigerSB-client](https://github.com/Stilltiger45/TigerSB-client) `pkg/profile` | GPL-3.0 | формат профиля, ключ `tigersb://` и подпись Ed25519 подписок; тот же автор |
 
 Тексты лицензий лежат в исходниках модулей (`go mod download`, затем `$(go env GOMODCACHE)`).
 

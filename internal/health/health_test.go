@@ -33,7 +33,8 @@ func newWorld(t *testing.T) *world {
 	w := &world{units: map[string]string{
 		"tigersb.service": "active", "tigersb-caddy.service": "active",
 		"tigersb-edge.service": "active", "tigersb-xray.service": "active",
-	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true}}
+		"tigersb-sub.service": "active",
+	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true, 10086: true}}
 	caddy := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if w.routed && strings.HasPrefix(r.URL.Path, "/"+secret+"/") {
 			rw.Header().Set("Content-Security-Policy", "default-src 'self'; form-action 'self'")
@@ -175,10 +176,14 @@ func TestXrayAndEdge(t *testing.T) {
 	if got := states(r)["xray"]; got != Fail {
 		t.Errorf("XHTTP not listening: %s", got)
 	}
+	if got := states(r)["sub"]; got != OK {
+		t.Errorf("subscriptions: %s", got)
+	}
 	w.units["tigersb-xray.service"] = "failed"
 	w.units["tigersb-edge.service"] = "inactive"
+	w.ports[10086] = false
 	r, _ = Run(ctx, w.env)
-	if s := states(r); s["xray"] != Fail || s["edge"] != Fail {
+	if s := states(r); s["xray"] != Fail || s["edge"] != Fail || s["sub"] != Fail {
 		t.Errorf("units down: %v", s)
 	}
 }

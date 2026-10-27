@@ -55,6 +55,7 @@ const usage = `TigerSB panel
   tigersb monitor  снять показатели и проверить сервер (вызывает таймер раз в 5 минут)
   tigersb xray     VPN-ядро в Docker: xray status | xray apply
   tigersb edge     делить порт 443 между сайтом и VPN (вызывает systemd)
+  tigersb sub      выдавать подписки пользователей (вызывает systemd)
   tigersb version  версия
 `
 
@@ -98,6 +99,8 @@ func main() {
 		err = cmdXray(os.Args[2:])
 	case "edge":
 		err = cmdEdge(os.Args[2:])
+	case "sub":
+		err = cmdSub(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -292,11 +295,13 @@ func panelUp() bool {
 // apply writes the site and loads it into Caddy, publishing the panel when
 // published is true.
 func (e *env) apply(published bool) error {
+	err := site.Apply(context.Background(), e.set, e.paths, site.PanelRoute(e.cfg, published), time.Now())
 	// Port 443 sends the domain to Caddy; keep that in step with the site.
+	// Caddy goes first: it must already accept the PROXY header the new
+	// routes add.
 	if err := e.runtime().Sync(context.Background(), e.st, e.set.Domain, false); err != nil {
 		fmt.Fprintln(os.Stderr, "маршруты порта 443:", err)
 	}
-	err := site.Apply(context.Background(), e.set, e.paths, site.PanelRoute(e.cfg, published), time.Now())
 	if errors.Is(err, site.ErrCaddyDown) {
 		fmt.Println(err)
 		return nil

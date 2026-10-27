@@ -49,6 +49,13 @@ const AdminSocket = "/run/tigersb-caddy/admin.sock"
 // protocols' connections to Xray.
 const InnerTLSPort = 8444
 
+// SubPort is where the subscription service (tigersb-sub) listens on
+// loopback. Caddy sends it /sub/* on the domain.
+const SubPort = 10086
+
+// SubPrefix starts every subscription address: https://<domain>/sub/<token>.
+const SubPrefix = "/sub/"
+
 // Settings describe the public site of this server.
 type Settings struct {
 	Domain   string `json:"domain"`
@@ -253,34 +260,61 @@ func RenderCaddyfile(s Settings, p Paths, r *Route) string {
 	b.WriteString("\tauto_https disable_redirects\n\tgrace_period 5s\n")
 	if s.Domain != "" {
 		fmt.Fprintf(&b, "\thttps_port %d\n\tdefault_bind 127.0.0.1\n", InnerTLSPort)
+		// The edge router tells Caddy the visitor's address in a PROXY
+		// header; a connection without one (a local check) is still served.
+		// HTTP/3 is off: Caddy would advertise UDP 8444, which no visitor can reach.
+		b.WriteString("\tservers {\n\t\tlistener_wrappers {\n\t\t\tproxy_protocol {\n\t\t\t\tallow 127.0.0.1/32\n\t\t\t}\n\t\t\ttls\n\t\t}\n\t\tprotocols h1 h2\n\t}\n")
 	}
 	b.WriteString("}\n\n")
-	if s.Domain != "" {
+	// stub serves the maintenance page for any path, with a 200 even from an
+	// error route. Without no-cache the browser keeps the page for a tenth of
+	// its age, so after a long close the secret path shows it even after open.
+	stub := func(indent string, rewrite, status bool) {
+		fmt.Fprintf(&b, "%sheader Cache-Control no-cache\n", indent)
+		fmt.Fprintf(&b, "%sroot * %s\n", indent, p.WWW)
+		if rewrite {
+			fmt.Fprintf(&b, "%srewrite * /index.html\n", indent)
+		} else {
+			fmt.Fprintf(&b, "%stry_files {path} /index.html\n", indent)
+		}
+		if status {
+			fmt.Fprintf(&b, "%sfile_server {\n%s\tstatus 200\n%s}\n", indent, indent, indent)
+		} else {
+			fmt.Fprintf(&b, "%sfile_server\n", indent)
+		}
+	}
+	if s.Domain == "" {
+		b.WriteString(":80 {\n")
+		stub("\t", false, false)
+	} else {
 		fmt.Fprintf(&b, "%s {\n\ttls {\n\t\tissuer acme {\n", s.Domain)
 		if s.Email != "" {
 			fmt.Fprintf(&b, "\t\t\temail %s\n", s.Email)
 		}
 		fmt.Fprintf(&b, "\t\t\tdisable_http_challenge\n\t\t\talt_tlsalpn_port %d\n\t\t}\n\t}\n", InnerTLSPort)
-	} else {
-		b.WriteString(":80 {\n")
-	}
-	stub := "\t"
-	if r != nil && s.Domain != "" {
-		fmt.Fprintf(&b, "\t@tigersb path /%s /%s/*\n", r.Secret, r.Secret)
-		fmt.Fprintf(&b, "\thandle @tigersb {\n\t\treverse_proxy %s\n\t}\n", r.Upstream)
+		if r != nil {
+			fmt.Fprintf(&b, "\t@tigersb path /%s /%s/*\n", r.Secret, r.Secret)
+			fmt.Fprintf(&b, "\thandle @tigersb {\n\t\treverse_proxy %s\n\t}\n", r.Upstream)
+		}
+		// Subscriptions. A wrong or revoked address gets 404 from tigersb-sub,
+		// which turns into the same maintenance page as any other path.
+		fmt.Fprintf(&b, "\thandle %s* {\n\t\treverse_proxy 127.0.0.1:%d {\n", SubPrefix, SubPort)
+		b.WriteString("\t\t\t@miss status 404\n\t\t\thandle_response @miss {\n")
+		stub("\t\t\t\t", true, true)
+		b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 		b.WriteString("\thandle {\n")
-		stub = "\t\t"
-	}
-	// Without this the browser keeps the stub for a tenth of its age, so
-	// after a long close the secret path shows the stub even after open.
-	fmt.Fprintf(&b, "%sheader Cache-Control no-cache\n", stub)
-	fmt.Fprintf(&b, "%sroot * %s\n", stub, p.WWW)
-	fmt.Fprintf(&b, "%stry_files {path} /index.html\n%sfile_server\n", stub, stub)
-	if stub != "\t" {
+		stub("\t\t", false, false)
+		b.WriteString("\t}\n")
+		// A service that is down shows the page too, not a bare 502.
+		// Error routes skip the site's header block, so it is repeated here.
+		b.WriteString("\thandle_errors {\n")
+		stub("\t\t", true, true)
+		b.WriteString("\t\theader {\n\t\t\t-Server\n\t\t\tReferrer-Policy no-referrer\n\t\t\tX-Content-Type-Options nosniff\n\t\t}\n")
 		b.WriteString("\t}\n")
 	}
 	b.WriteString("\tencode gzip\n")
-	b.WriteString("\theader {\n\t\t-Server\n\t\tReferrer-Policy no-referrer\n\t\tX-Content-Type-Options nosniff\n\t}\n}\n")
+	// Via would tell that the answer came through a proxy.
+	b.WriteString("\theader {\n\t\t-Server\n\t\t-Via\n\t\tReferrer-Policy no-referrer\n\t\tX-Content-Type-Options nosniff\n\t}\n}\n")
 	return b.String()
 }
 

@@ -144,8 +144,8 @@ func TestRenderAndRoutes(t *testing.T) {
 	}
 
 	r := Routes(s, "vpn.example.com")
-	if r.Pick("vpn.example.com").Addr != "127.0.0.1:8444" || r.Pick("vpn.example.com").Proxy {
-		t.Errorf("domain must go to Caddy without PROXY: %+v", r.Pick("vpn.example.com"))
+	if r.Pick("vpn.example.com").Addr != "127.0.0.1:8444" || !r.Pick("vpn.example.com").Proxy {
+		t.Errorf("domain must go to Caddy with the PROXY header: %+v", r.Pick("vpn.example.com"))
 	}
 	if b := r.Pick("cloudflare.com"); b.Addr != "127.0.0.1:10442" || !b.Proxy {
 		t.Errorf("xhttp sni: %+v", b)

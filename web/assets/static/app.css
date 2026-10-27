@@ -249,6 +249,13 @@ ul.users li.empty { padding: 8px 0; }
 .link-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .link-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.78rem; color: var(--muted); }
 img.qr { width: 240px; max-width: 100%; border-radius: 12px; background: #fff; padding: 4px; }
+.user-body h3 { margin: 0 0 2px; font-size: 0.95rem; }
+.devices ul.device-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; }
+.device { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255, 255, 255, 0.02); }
+.device-main { display: grid; gap: 2px; min-width: 0; }
+.device-main small { overflow-wrap: anywhere; }
+.device-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.device .pill { font-size: 0.72rem; padding: 2px 8px; }
 .online ul.ips { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
 .online p { margin: 4px 0 0; }
 .user-controls { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }

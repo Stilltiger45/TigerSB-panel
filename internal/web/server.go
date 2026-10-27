@@ -142,6 +142,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleUserUpdate(w, r)
 	case rest == "/api/users/delete":
 		s.handleUserDelete(w, r)
+	case rest == "/api/users/device/delete":
+		s.handleDeviceDelete(w, r)
 	case rest == "/api/users/qr":
 		s.handleUserQR(w, r)
 	case rest == "/api/protocols":

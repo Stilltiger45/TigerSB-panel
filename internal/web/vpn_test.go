@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Stilltiger45/TigerSB-client/pkg/profile"
+
 	"github.com/Stilltiger45/TigerSB-panel/internal/edge"
+	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
 
@@ -94,11 +99,21 @@ func TestUsersLifecycle(t *testing.T) {
 		t.Fatalf("users: %+v", r)
 	}
 	u := r.Users[0]
-	if u.Name != "Мама" || u.Devices != 2 || !u.Enabled || len(u.Links) != 2 || r.Address != "203.0.113.9" {
+	if u.Name != "Мама" || u.Devices != 2 || !u.Enabled || u.Subs == nil || r.Domain != "example.com" {
 		t.Fatalf("user: %+v", u)
 	}
-	if !strings.HasPrefix(u.Links[0].URL, "vless://"+u.UUID+"@203.0.113.9:8443?") {
-		t.Errorf("link: %s", u.Links[0].URL)
+	// Only subscription links: tigersb:// with the panel key, and https://.
+	pk, err := sub.PublicKey(context.Background(), s.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := strings.TrimPrefix(u.Subs.HTTPS, "https://example.com/sub/")
+	if len(token) != 32 || token == u.Subs.HTTPS {
+		t.Fatalf("https link: %s", u.Subs.HTTPS)
+	}
+	key, err := profile.ParseKey(u.Subs.TigerSB)
+	if err != nil || key.URL != u.Subs.HTTPS || profile.EncodeKey(key.PK) != pk {
+		t.Fatalf("tigersb link %s: %v %+v", u.Subs.TigerSB, err, key)
 	}
 	// The user went into the running Xray, into both inbounds, and into the config on disk.
 	if !strings.Contains(f.joined(), "docker exec -i tigersb-xray /usr/local/bin/xray api adu --server=127.0.0.1:10085 stdin:") {
@@ -139,11 +154,45 @@ func TestUsersLifecycle(t *testing.T) {
 		}
 	}
 
-	// A new key removes the old user and adds the new one.
+	// Devices that fetched the subscription show up and can be removed.
+	h := &sub.Handler{Store: s.store, Domain: func(context.Context) (string, error) { return "example.com", nil }}
+	fetch := func(hwid string) int {
+		req := httptest.NewRequest(http.MethodGet, "/sub/"+token, nil)
+		req.Header.Set("User-Agent", "TigerSB-android/1.0")
+		req.Header.Set("X-Hwid", hwid)
+		req.Header.Set("X-Device-Model", "Pixel "+hwid)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for _, hw := range []string{"a", "b", "c", "d"} {
+		fetch(hw)
+	}
+	r = decodeUsers(t, do(s, http.MethodGet, "/"+secret+"/api/users", "", c).Body.Bytes())
+	list := r.Users[0].List
+	if len(list) != 3 || list[0].Model != "Pixel a" || list[2].Model != "Pixel c" {
+		t.Fatalf("devices (limit 3): %+v", list)
+	}
+	w = do(s, http.MethodPost, "/"+secret+"/api/users/device/delete", fmt.Sprintf(`{"user_id":1,"id":%d}`, list[0].ID), c)
+	if r := decodeUsers(t, w.Body.Bytes()); len(r.Users[0].List) != 2 {
+		t.Fatalf("device delete: %s", w.Body)
+	}
+	if fetch("d") != http.StatusOK {
+		t.Fatal("a freed place was not taken")
+	}
+	if w := do(s, http.MethodPost, "/"+secret+"/api/users/device/delete", `{"user_id":2,"id":1}`, c); w.Code != http.StatusBadRequest {
+		t.Fatalf("device of another user: %d", w.Code)
+	}
+
+	// New links: a new key and a new address; the old address is gone and
+	// the devices start over.
 	w = do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":1,"reissue":true}`, c)
 	r = decodeUsers(t, w.Body.Bytes())
-	if r.Users[0].UUID == u.UUID {
-		t.Fatal("uuid not reissued")
+	if r.Users[0].UUID == u.UUID || r.Users[0].Subs.HTTPS == u.Subs.HTTPS || len(r.Users[0].List) != 0 {
+		t.Fatalf("reissue: %+v", r.Users[0])
+	}
+	if fetch("a") != http.StatusNotFound {
+		t.Fatal("old subscription address still works")
 	}
 	tail := strings.Join(f.calls[len(f.calls)-6:], "\n")
 	if !strings.Contains(tail, "rmu --server=127.0.0.1:10085 -tag=grpc u1") || !strings.Contains(tail, "-tag=xhttp u1") {
@@ -157,12 +206,14 @@ func TestUsersLifecycle(t *testing.T) {
 		t.Fatal("disabled user is still in the config")
 	}
 
-	// QR of a link.
-	if w := do(s, http.MethodGet, "/"+secret+"/api/users/qr?id=1&p=xhttp", "", c); w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), "<svg") {
-		t.Fatalf("qr: %d %.60s", w.Code, w.Body)
+	// QR of the subscription links.
+	for _, kind := range []string{"tigersb", "https"} {
+		if w := do(s, http.MethodGet, "/"+secret+"/api/users/qr?id=1&kind="+kind, "", c); w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), "<svg") {
+			t.Fatalf("qr %s: %d %.60s", kind, w.Code, w.Body)
+		}
 	}
-	if w := do(s, http.MethodGet, "/"+secret+"/api/users/qr?id=1&p=nope", "", c); w.Code != http.StatusNotFound {
-		t.Fatalf("qr of unknown protocol: %d", w.Code)
+	if w := do(s, http.MethodGet, "/"+secret+"/api/users/qr?id=9&kind=https", "", c); w.Code != http.StatusNotFound {
+		t.Fatalf("qr of unknown user: %d", w.Code)
 	}
 
 	w = do(s, http.MethodPost, "/"+secret+"/api/users/delete", `{"id":1}`, c)
@@ -176,13 +227,16 @@ func TestUsersLifecycle(t *testing.T) {
 
 func TestUsersNeedLogin(t *testing.T) {
 	s, _, _ := vpnServer(t)
-	for _, p := range []string{"/api/users", "/api/protocols", "/api/users/qr?id=1&p=grpc"} {
+	for _, p := range []string{"/api/users", "/api/protocols", "/api/users/qr?id=1&kind=https"} {
 		if w := do(s, http.MethodGet, "/"+secret+p, ""); w.Code != http.StatusUnauthorized {
 			t.Errorf("%s: %d", p, w.Code)
 		}
 	}
 	if w := do(s, http.MethodPost, "/"+secret+"/api/users/add", `{"name":"a","devices":1}`); w.Code != http.StatusUnauthorized {
 		t.Errorf("add: %d", w.Code)
+	}
+	if w := do(s, http.MethodPost, "/"+secret+"/api/users/device/delete", `{"user_id":1,"id":1}`); w.Code != http.StatusUnauthorized {
+		t.Errorf("device delete: %d", w.Code)
 	}
 }
 

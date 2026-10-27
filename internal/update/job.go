@@ -29,6 +29,7 @@ const Unit = "tigersb-update.service"
 // rollback.
 const (
 	EdgeUnit = "tigersb-edge.service"
+	SubUnit  = "tigersb-sub.service"
 	XrayUnit = "tigersb-xray.service"
 )
 
@@ -357,8 +358,9 @@ func (u *Updater) restore(ctx context.Context, id string, start bool, log io.Wri
 	if out, err := u.run("systemctl", "restart", service.CaddyUnit); err != nil {
 		return fmt.Errorf("Caddy не перезапустился: %v %s", err, out)
 	}
-	// The edge router and Xray rebuild their files from the restored database.
-	for _, name := range []string{EdgeUnit, XrayUnit} {
+	// The edge router, the subscriptions and Xray rebuild their state from
+	// the restored database.
+	for _, name := range []string{EdgeUnit, SubUnit, XrayUnit} {
 		if after[name] {
 			if out, err := u.run("systemctl", "enable", name); err != nil {
 				fmt.Fprintf(log, "systemctl enable %s: %v %s\n", name, err, out)

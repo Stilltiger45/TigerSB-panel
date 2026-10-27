@@ -234,13 +234,31 @@ func TestCaddyfilePanelRoute(t *testing.T) {
 			t.Errorf("Caddyfile lacks %q:\n%s", want, got)
 		}
 	}
-	if closed := RenderCaddyfile(valid(), p, nil); strings.Contains(closed, "reverse_proxy") {
+	closed := RenderCaddyfile(valid(), p, nil)
+	if strings.Contains(closed, "reverse_proxy 127.0.0.1:34567") || strings.Contains(closed, "@tigersb") {
 		t.Errorf("closed panel is still proxied:\n%s", closed)
+	}
+	// Subscriptions work whether the panel is open or closed, and a miss
+	// (404 from tigersb-sub) or a service that is down shows the stub.
+	for _, conf := range []string{got, closed} {
+		for _, want := range []string{
+			"handle /sub/* {\n\t\treverse_proxy 127.0.0.1:10086 {\n\t\t\t@miss status 404\n\t\t\thandle_response @miss {",
+			"rewrite * /index.html",
+			"\thandle_errors {",
+			"status 200",
+			"proxy_protocol {\n\t\t\t\tallow 127.0.0.1/32",
+			"protocols h1 h2",
+			"-Via",
+		} {
+			if !strings.Contains(conf, want) {
+				t.Errorf("Caddyfile lacks %q:\n%s", want, conf)
+			}
+		}
 	}
 	// Without a domain the panel would be served over plain HTTP, so never publish it.
 	s := valid()
 	s.Domain = ""
-	if plain := RenderCaddyfile(s, p, r); strings.Contains(plain, "reverse_proxy") {
+	if plain := RenderCaddyfile(s, p, r); strings.Contains(plain, "reverse_proxy") || strings.Contains(plain, "proxy_protocol") {
 		t.Errorf("panel published without TLS:\n%s", plain)
 	}
 	if u := PanelURL(valid(), cfg); u != "https://vpn.example.com/0123456789abcdef0123456789abcdef/" {
