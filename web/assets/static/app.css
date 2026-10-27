@@ -74,6 +74,48 @@ input, select {
 }
 input:focus, select:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255, 122, 26, 0.25); }
 input::placeholder { color: var(--faint); }
+
+/* Dropdowns. Chromium 135+ draws the list itself (base-select), so it gets
+   the panel's glass and orange; other browsers get a dark native list. */
+select {
+  appearance: none;
+  cursor: pointer;
+  padding-right: 40px;
+  background: var(--field) url("chevron.svg") no-repeat right 15px center;
+}
+select:hover { border-color: rgba(255, 122, 26, 0.5); }
+select option { background-color: #17120e; color: var(--white); }
+select option:checked { background-color: #4a2a12; }
+@supports (appearance: base-select) {
+  select, ::picker(select) { appearance: base-select; }
+  select { display: flex; align-items: center; justify-content: space-between; gap: 10px; background-image: none; padding-right: 14px; }
+  select::picker-icon {
+    content: "";
+    width: 12px;
+    height: 8px;
+    background: url("chevron.svg") no-repeat center;
+    transition: rotate 0.15s;
+  }
+  select:open::picker-icon { rotate: 180deg; }
+  ::picker(select) {
+    margin-top: 6px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #15100c;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  }
+  select option {
+    padding: 9px 12px;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--white);
+    cursor: pointer;
+  }
+  select option:hover, select option:focus-visible { background: rgba(255, 122, 26, 0.16); outline: none; }
+  select option:checked { background: rgba(255, 122, 26, 0.24); color: var(--orange-light); font-weight: 600; }
+  select option::checkmark { color: var(--orange); }
+}
 .hint { font-size: 0.82rem; color: var(--faint); }
 
 button, .btn {
