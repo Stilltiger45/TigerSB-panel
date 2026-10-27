@@ -51,7 +51,9 @@ function certText(cert) {
   switch (cert.state) {
     case "ok":
     case "expiring":
-      return `${cert.issuer}, ещё ${cert.days_left} дн. Caddy продлит его сам.`;
+      return cert.days_left > 0
+        ? `${cert.issuer}, ещё ${cert.days_left} дн. Caddy продлит его сам.`
+        : `${cert.issuer}, истекает меньше чем через сутки. Caddy продлит его сам, если порт 443 открыт.`;
     case "missing":
       return "Caddy получает сертификат. Если это длится дольше пары минут, проверьте, что домен указывает на сервер и порт 443 открыт.";
     case "untrusted":
