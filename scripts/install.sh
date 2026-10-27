@@ -20,6 +20,12 @@ GO_VERSION=1.26.0
 # Caddy serves the maintenance page and gets the certificate. Pinned release
 # with checksums from caddy_2.11.4_checksums.txt (Apache-2.0, unmodified).
 LIB_DIR=/usr/local/lib/tigersb
+# Go downloads modules and keeps build results here while it builds; about
+# 400 MB, removed when the installer exits. Set explicitly because the
+# panel's update button runs the installer as a systemd service, where HOME
+# is not set and Go has no default place for them. Not in /tmp, which is in
+# memory on some systems.
+CACHE_DIR=/var/cache/tigersb
 CADDY_VERSION=2.11.4
 caddy_sha512() {
 	case "$1" in
@@ -165,7 +171,9 @@ build_from() {
 	go="$(command -v go || true)"
 	[ -n "$go" ] || go="$(install_go "$tmp")"
 	echo "Собираю tigersb ($ver)..."
-	(cd "$src" && CGO_ENABLED=0 GOFLAGS=-trimpath "$go" build -ldflags "-s -w -X main.version=$ver" -o "$tmp/tigersb" ./cmd/tigersb)
+	mkdir -p "$CACHE_DIR"
+	(cd "$src" && HOME="${HOME:-/root}" GOPATH="$CACHE_DIR/go" GOMODCACHE="$CACHE_DIR/go/pkg/mod" GOCACHE="$CACHE_DIR/go-build" \
+		CGO_ENABLED=0 GOFLAGS=-trimpath "$go" build -ldflags "-s -w -X main.version=$ver" -o "$tmp/tigersb" ./cmd/tigersb)
 }
 
 install_go() {
@@ -177,7 +185,7 @@ install_go() {
 
 get_binary() {
 	tmp="$(mktemp -d)"
-	trap 'rm -rf "$tmp"' EXIT
+	trap 'rm -rf "$tmp" "$CACHE_DIR"' EXIT
 	if [ -n "$binary" ]; then
 		[ -f "$binary" ] || die "файл $binary не найден"
 		install -m 0755 "$binary" "$BIN"
