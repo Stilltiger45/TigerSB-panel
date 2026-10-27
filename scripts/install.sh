@@ -282,11 +282,32 @@ install_docker() {
 	systemctl enable --now docker.service >&2 || return 1
 }
 
+# enable_bbr lets the panel's services switch their connections to BBR, the
+# per-protocol switch on the "Протоколы" tab. It loads tcp_bbr and adds bbr to
+# the algorithms any program may pick; the server's default stays as it was.
+enable_bbr() {
+	modprobe tcp_bbr 2>/dev/null || true
+	if ! grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+		echo "Ядро сервера без BBR: переключатель BBR на вкладке «Протоколы» работать не будет." >&2
+		return 0
+	fi
+	[ ! -d /etc/modules-load.d ] || echo tcp_bbr >"/etc/modules-load.d/tigersb-bbr.conf"
+	local allowed
+	allowed="$(cat /proc/sys/net/ipv4/tcp_allowed_congestion_control)"
+	case " $allowed " in
+		*" bbr "*) ;;
+		*) allowed="$allowed bbr" ;;
+	esac
+	printf '# TigerSB: protocols may switch to BBR.\nnet.ipv4.tcp_allowed_congestion_control = %s\n' "$allowed" >"/etc/sysctl.d/90-tigersb-bbr.conf"
+	sysctl -q -p /etc/sysctl.d/90-tigersb-bbr.conf >/dev/null || echo "Не удалось разрешить BBR (sysctl)." >&2
+}
+
 # start_vpn starts the edge router on 443, the subscriptions, and Xray and
 # sing-box in Docker. Run it after start_site: with a domain Caddy moves to
 # 127.0.0.1:8444, frees 443 and already reads the edge's PROXY header.
 start_vpn() {
 	install -d -m 0700 "$DATA_DIR/edge" "$DATA_DIR/docker" "$DATA_DIR/singbox"
+	enable_bbr
 	systemctl enable tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-singbox.service
 	systemctl restart tigersb-edge.service tigersb-sub.service
 	if install_docker; then

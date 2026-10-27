@@ -108,6 +108,8 @@ fi
 
 echo "Удаляю файлы..."
 rm -rf "$CONF_DIR" "$DATA_DIR" "$BIN" "$LIB_DIR" "$CACHE_DIR"
+# The BBR permission stays in effect until reboot; the module stays loaded.
+rm -f /etc/sysctl.d/90-tigersb-bbr.conf /etc/modules-load.d/tigersb-bbr.conf
 
 echo
 echo "TigerSB полностью удалён."
