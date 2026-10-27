@@ -209,16 +209,6 @@ function userBody(u) {
   const body = el("div", { class: "user-body" });
   body.append(subBlock(u), deviceBlock(u));
 
-  const online = el("div", { class: "online" }, el("span", { class: "muted", text: "Подключены к VPN сейчас" }));
-  if (u.online.length) {
-    const ul = el("ul", { class: "ips" });
-    for (const a of u.online) ul.append(el("li", {}, el("code", { text: a.ip }), el("small", { class: "faint", text: a.last_seen ? " · " + when(a.last_seen * 1000) : "" })));
-    online.append(ul);
-  } else {
-    online.append(el("p", { class: "faint", text: u.enabled ? "никого" : "пользователь выключен" }));
-  }
-  body.append(online);
-
   const devices = el("input", { type: "number", min: 1, max: 20, value: u.devices, class: "num", "aria-label": "Устройств" });
   const save = el("button", { type: "button", class: "ghost small", text: "Сохранить", onclick: (e) => changeUser({ id: u.id, devices: Number(devices.value) }, e.target) });
   const name = el("input", { value: u.name, maxlength: 40, "aria-label": "Имя" });

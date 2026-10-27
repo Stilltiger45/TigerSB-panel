@@ -9,7 +9,10 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/metrics"
+	"github.com/Stilltiger45/TigerSB-panel/internal/service"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
+	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
 
 // maxPoints caps a chart; longer ranges are averaged into this many points.
@@ -31,12 +34,29 @@ type updateInfo struct {
 	Log    string        `json:"log,omitempty"`
 }
 
+// coreView is a VPN core container on the "Контроль" tab. Its health check
+// has the same ID.
+type coreView struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Protocols string `json:"protocols"`
+	State     string `json:"state"` // systemd state of the unit
+}
+
 type controlResponse struct {
 	Latest  *metrics.Sample `json:"latest"`
 	History []point         `json:"history"`
 	Health  *health.Report  `json:"health"`
 	Update  updateInfo      `json:"update"`
 	Points  []update.Point  `json:"points"`
+	Cores   []coreView      `json:"cores"`
+}
+
+func (s *Server) cores() []coreView {
+	return []coreView{
+		{ID: "xray", Title: "Xray", Protocols: "gRPC, XHTTP", State: service.UnitState(s.Run, xray.Unit)},
+		{ID: "singbox", Title: "sing-box", Protocols: "TUIC", State: service.UnitState(s.Run, singbox.Unit)},
+	}
 }
 
 func pct(used, total uint64) float64 {
@@ -146,7 +166,7 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 		internalError(w)
 		return
 	}
-	resp := controlResponse{Latest: latest, History: chart(history), Health: report, Update: s.updateInfo(ctx), Points: []update.Point{}}
+	resp := controlResponse{Latest: latest, History: chart(history), Health: report, Update: s.updateInfo(ctx), Points: []update.Point{}, Cores: s.cores()}
 	if s.Updater != nil {
 		if points, err := update.ListPoints(s.Updater.Layout); err == nil && points != nil {
 			resp.Points = points
@@ -175,6 +195,58 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+// coreSettle is how long a restarted core gets to open its ports before the
+// health check looks at them.
+var coreSettle = 2 * time.Second
+
+// handleCoreRestart restarts a VPN core container, then checks the server,
+// so the page shows at once whether that helped. Xray first gets its config
+// rebuilt from the database; sing-box rebuilds its own when it starts.
+func (s *Server) handleCoreRestart(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(w, r, true) {
+		return
+	}
+	var req struct {
+		Core string `json:"core"`
+	}
+	if !decode(w, r, maxBody, &req) {
+		return
+	}
+	ctx := r.Context()
+	var err error
+	switch req.Core {
+	case "xray":
+		var domain string
+		if domain, err = s.domain(ctx); err == nil {
+			err = s.Xray.Sync(ctx, s.store, domain, true)
+		}
+	case "singbox":
+		err = s.Singbox.Restart(ctx)
+	default:
+		badRequest(w, "нет такого ядра")
+		return
+	}
+	resp := struct {
+		Cores   []coreView     `json:"cores"`
+		Health  *health.Report `json:"health"`
+		Warning string         `json:"warning,omitempty"`
+	}{}
+	if err != nil {
+		resp.Warning = err.Error()
+	} else {
+		select {
+		case <-time.After(coreSettle):
+		case <-ctx.Done():
+		}
+	}
+	if resp.Health, err = health.Run(ctx, s.healthEnv()); err != nil {
+		internalError(w)
+		return
+	}
+	resp.Cores = s.cores()
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleJob reports the running update; the page polls it.

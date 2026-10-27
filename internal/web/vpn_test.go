@@ -364,3 +364,36 @@ func TestProtocolsSaveTUIC(t *testing.T) {
 		t.Fatalf("bad TUIC: %d %s", w.Code, w.Body)
 	}
 }
+
+func TestCoreRestart(t *testing.T) {
+	s, f, c := vpnServer(t)
+	old := coreSettle
+	coreSettle = 0
+	defer func() { coreSettle = old }()
+	api := "/" + secret + "/api/control/core"
+	for core, unit := range map[string]string{"xray": xray.Unit, "singbox": singbox.Unit} {
+		w := do(s, http.MethodPost, api, `{"core":"`+core+`"}`, c)
+		if w.Code != http.StatusOK || !strings.Contains(f.joined(), "systemctl restart "+unit) {
+			t.Fatalf("%s: %d %s\n%s", core, w.Code, w.Body, f.joined())
+		}
+		var resp struct {
+			Cores  []coreView `json:"cores"`
+			Health struct {
+				Results []struct{ ID string } `json:"results"`
+			} `json:"health"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || len(resp.Cores) != 2 || resp.Cores[0].State != "active" || len(resp.Health.Results) == 0 {
+			t.Fatalf("%s: %s", core, w.Body)
+		}
+	}
+	// Xray restarts with a config rebuilt from the database.
+	if _, err := os.Stat(s.Xray.ConfigPath()); err != nil {
+		t.Errorf("xray config not written: %v", err)
+	}
+	if w := do(s, http.MethodPost, api, `{"core":"nginx"}`, c); w.Code != http.StatusBadRequest {
+		t.Errorf("unknown core: %d", w.Code)
+	}
+	if w := do(s, http.MethodPost, api, `{"core":"xray"}`); w.Code == http.StatusOK {
+		t.Error("restart without login")
+	}
+}

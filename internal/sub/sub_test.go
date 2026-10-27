@@ -189,12 +189,13 @@ func TestSigningKeyStays(t *testing.T) {
 	if a != b || len(a) != 43 {
 		t.Fatalf("key changed or malformed: %q %q", a, b)
 	}
-	if LinksFor("", a, "tok") != nil {
+	u := store.User{Name: "Мама", SubToken: "tok"}
+	if LinksFor("", a, u) != nil {
 		t.Error("links without a domain")
 	}
-	l := LinksFor("vpn.example.com", a, "tok")
+	l := LinksFor("vpn.example.com", a, u)
 	k, err := profile.ParseKey(l.TigerSB)
-	if err != nil || k.URL != "https://vpn.example.com/sub/tok" || k.Name != Name {
+	if err != nil || k.URL != "https://vpn.example.com/sub/tok" || k.Name != "Мама" {
 		t.Fatalf("key %s: %v %+v", l.TigerSB, err, k)
 	}
 }
@@ -209,6 +210,10 @@ func TestTUICInSubscriptions(t *testing.T) {
 	p, _, err := profile.Open(w.Body.Bytes(), pinned)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, w.Body)
+	}
+	// The client shows the profile name: the user's, not the brand.
+	if p.Name != "Мама" || w.Header().Get("Profile-Title") != "base64:"+base64.StdEncoding.EncodeToString([]byte("TigerSB · Мама")) {
+		t.Errorf("name %q, title %q", p.Name, w.Header().Get("Profile-Title"))
 	}
 	tr := p.Exits[0].Transports
 	if len(tr) != 3 || tr[2].ID != "tuic" || tr[2].Prio != 30 || !strings.Contains(string(tr[2].Xray), `"serverName":"vpn.example.com"`) {

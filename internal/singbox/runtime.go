@@ -184,6 +184,16 @@ func (r *Runtime) Signal(ctx context.Context) error {
 	return err
 }
 
+// Restart restarts the container; on start it rebuilds the config and the
+// certificate copy from the database and Caddy's storage.
+func (r *Runtime) Restart(ctx context.Context) error {
+	out, err := r.Exec(ctx, nil, "systemctl", "restart", Unit)
+	if err != nil {
+		return fmt.Errorf("sing-box не перезапустился: %v %s. Подробности: journalctl -u %s", err, out, Unit)
+	}
+	return nil
+}
+
 // Reload makes a running sing-box reread its files; a stopped one reads
 // them when it starts.
 func (r *Runtime) Reload(ctx context.Context) error {

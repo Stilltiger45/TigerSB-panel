@@ -204,13 +204,19 @@
       <p class="hint">Снимается раз в 5 минут и хранится 7 дней. Значения усреднены между замерами. Время, которое забирает гипервизор хостинга (steal), в процессор не входит и показано отдельно.</p>
     </div>
 
+    <div class="grid" id="cores"></div>
+    <p id="core-msg" class="notice" hidden></p>
+
     <div class="glass">
       <div class="head-row">
         <h2>Проверка работоспособности</h2>
         <button id="h-run" class="ghost" type="button">Проверить сейчас</button>
       </div>
       <p><span id="h-pill" class="pill off">нет данных</span> <span id="h-time" class="faint"></span></p>
-      <ul class="checks" id="checks"></ul>
+      <details class="more" id="h-box">
+        <summary id="h-sum">Все проверки</summary>
+        <ul class="checks" id="checks"></ul>
+      </details>
       <p class="hint">Сервер проверяет себя сам раз в 5 минут, даже когда панель спит.</p>
     </div>
 
@@ -243,29 +249,56 @@
     </div>
   </section>
 
-  <section id="tab-about" hidden>
+  <section id="tab-about" class="stack" hidden>
+    <div class="about-head">
+      <img src="static/tiger.svg" alt="">
+      <h2>TigerSB <span class="muted">панель</span></h2>
+      <p class="muted">Версия <span id="about-version">—</span></p>
+    </div>
+    <div class="grid">
+      <div class="glass">
+        <h2>Что это</h2>
+        <p>Своя VPN-панель, которая ставится на сервер одной командой. Добавляете человека, отправляете ему ключ или QR-код, и он подключён. Снаружи сервер выглядит как обычный сайт на техобслуживании, а сама панель открывается только по секретному адресу.</p>
+        <p>Панель сама держит протоколы gRPC, XHTTP и TUIC в двух ядрах, раздаёт подписанные подписки, следит за лимитом устройств, сертификатом и здоровьем сервера и обновляется кнопкой с откатом при ошибке.</p>
+      </div>
+      <div class="glass">
+        <h2>Лицензия</h2>
+        <p>TigerSB — свободная программа под лицензией GNU GPL 3.0. Её можно использовать, изучать, менять и распространять, если сохранять ту же лицензию и открывать исходный код. Программа предоставляется без каких-либо гарантий.</p>
+        <p><a href="https://github.com/Stilltiger45/TigerSB-panel" rel="noreferrer" target="_blank">Исходный код на GitHub</a> · <a href="https://github.com/Stilltiger45/TigerSB-client" rel="noreferrer" target="_blank">приложение TigerSB</a></p>
+      </div>
+      <div class="glass">
+        <h2>Внутри</h2>
+        <ul class="parts">
+          <li><span>Xray-core 26.9.30</span><span class="muted">MPL 2.0</span></li>
+          <li><span>sing-box 1.14.4</span><span class="muted">GPL 3.0</span></li>
+          <li><span>Caddy 2.11.4</span><span class="muted">Apache 2.0</span></li>
+          <li><span>Docker</span><span class="muted">Apache 2.0</span></li>
+          <li><span>Go и SQLite (modernc)</span><span class="muted">BSD</span></li>
+        </ul>
+      </div>
+    </div>
     <div class="glass">
-      <h2>О панели</h2>
-      <p class="muted">TigerSB — свободная программа под лицензией GPL-3.0. Исходный код: <a href="https://github.com/Stilltiger45/TigerSB-panel" rel="noreferrer" target="_blank">github.com/Stilltiger45/TigerSB-panel</a>. Версия <span id="about-version">—</span>.</p>
-      <h2>Компоненты и лицензии</h2>
-      <table class="lic">
-        <tr><th>Компонент</th><th>Лицензия</th><th>Как используется</th></tr>
-        <tr><td>Xray-core 26.9.30</td><td>MPL-2.0</td><td>VPN-ядро: протоколы gRPC и XHTTP с REALITY; официальный Docker-образ ghcr.io/xtls/xray-core без изменений, закреплён по хешу</td></tr>
-        <tr><td>sing-box 1.14.4</td><td>GPL-3.0-or-later</td><td>второе VPN-ядро: протокол TUIC; официальный Docker-образ ghcr.io/sagernet/sing-box без изменений, закреплён по хешу</td></tr>
-        <tr><td>Docker (docker.io)</td><td>Apache-2.0</td><td>запуск контейнеров Xray и sing-box; пакет из репозитория дистрибутива</td></tr>
-        <tr><td>Caddy 2.11.4</td><td>Apache-2.0</td><td>веб-сервер заглушки и сертификаты; официальная сборка без изменений, текст лицензии в /usr/local/lib/tigersb/caddy.LICENSE</td></tr>
-        <tr><td>rsc.io/qr</td><td>BSD-3-Clause</td><td>QR-коды ссылок</td></tr>
-        <tr><td>TigerSB-client pkg/profile</td><td>GPL-3.0</td><td>формат профиля, ключ tigersb:// и подпись подписок; тот же автор</td></tr>
-        <tr><td>modernc.org/sqlite, libc, mathutil, memory</td><td>BSD-3-Clause</td><td>база данных панели</td></tr>
-        <tr><td>golang.org/x/crypto, x/sys, x/term</td><td>BSD-3-Clause</td><td>Argon2id, ввод пароля</td></tr>
-        <tr><td>github.com/google/uuid, remyoudompheng/bigfft</td><td>BSD-3-Clause</td><td>зависимости SQLite</td></tr>
-        <tr><td>github.com/dustin/go-humanize</td><td>MIT</td><td>зависимость SQLite</td></tr>
-        <tr><td>Логотип и цвета TigerSB-client</td><td>GPL-3.0</td><td>тот же автор, общий стиль</td></tr>
-        <tr><td>web-panel-proxy</td><td>MIT</td><td>идеи: сертификат только через порт 443 (TLS-ALPN), закреплённая версия Caddy, обновление из панели в отдельной службе с временным откатом, учёт steal отдельно от загрузки процессора</td></tr>
-        <tr><td>OlConnect_manager</td><td>WTFPL</td><td>идея установки и удаления одной командой</td></tr>
-        <tr><td>RealiTLScanner</td><td>MPL-2.0</td><td>идея сканера SNI: рукопожатие без SNI с соседними адресами и проверка TLS 1.3, HTTP/2 и X25519</td></tr>
-      </table>
-      <p class="faint">Полный список с текстами: <a href="https://github.com/Stilltiger45/TigerSB-panel/blob/main/THIRD_PARTY_NOTICES.md" rel="noreferrer" target="_blank">THIRD_PARTY_NOTICES.md</a>.</p>
+      <details class="more">
+        <summary>Лицензии компонентов и чьи идеи взяты</summary>
+        <table class="lic">
+          <tr><th>Компонент</th><th>Лицензия</th><th>Как используется</th></tr>
+          <tr><td>Xray-core 26.9.30</td><td>MPL-2.0</td><td>VPN-ядро: протоколы gRPC и XHTTP с REALITY; официальный Docker-образ ghcr.io/xtls/xray-core без изменений, закреплён по хешу</td></tr>
+          <tr><td>sing-box 1.14.4</td><td>GPL-3.0-or-later</td><td>второе VPN-ядро: протокол TUIC; официальный Docker-образ ghcr.io/sagernet/sing-box без изменений, закреплён по хешу</td></tr>
+          <tr><td>Docker (docker.io)</td><td>Apache-2.0</td><td>запуск контейнеров Xray и sing-box; пакет из репозитория дистрибутива</td></tr>
+          <tr><td>Caddy 2.11.4</td><td>Apache-2.0</td><td>веб-сервер заглушки и сертификаты; официальная сборка без изменений, текст лицензии в /usr/local/lib/tigersb/caddy.LICENSE</td></tr>
+          <tr><td>rsc.io/qr</td><td>BSD-3-Clause</td><td>QR-коды ссылок</td></tr>
+          <tr><td>TigerSB-client pkg/profile</td><td>GPL-3.0</td><td>формат профиля, ключ tigersb:// и подпись подписок; тот же автор</td></tr>
+          <tr><td>modernc.org/sqlite, libc, mathutil, memory</td><td>BSD-3-Clause</td><td>база данных панели</td></tr>
+          <tr><td>golang.org/x/crypto, x/sys, x/term</td><td>BSD-3-Clause</td><td>Argon2id, ввод пароля</td></tr>
+          <tr><td>github.com/google/uuid, remyoudompheng/bigfft</td><td>BSD-3-Clause</td><td>зависимости SQLite</td></tr>
+          <tr><td>github.com/dustin/go-humanize</td><td>MIT</td><td>зависимость SQLite</td></tr>
+          <tr><td>Логотип и цвета TigerSB-client</td><td>GPL-3.0</td><td>тот же автор, общий стиль</td></tr>
+          <tr><td>web-panel-proxy</td><td>MIT</td><td>идеи: сертификат только через порт 443 (TLS-ALPN), закреплённая версия Caddy, обновление из панели в отдельной службе с временным откатом, учёт steal отдельно от загрузки процессора</td></tr>
+          <tr><td>OlConnect_manager</td><td>WTFPL</td><td>идея установки и удаления одной командой</td></tr>
+          <tr><td>RealiTLScanner</td><td>MPL-2.0</td><td>идея сканера SNI: рукопожатие без SNI с соседними адресами и проверка TLS 1.3, HTTP/2 и X25519</td></tr>
+        </table>
+        <p class="faint">Полный список с текстами: <a href="https://github.com/Stilltiger45/TigerSB-panel/blob/main/THIRD_PARTY_NOTICES.md" rel="noreferrer" target="_blank">THIRD_PARTY_NOTICES.md</a>.</p>
+      </details>
     </div>
   </section>
 </main>

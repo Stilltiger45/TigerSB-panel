@@ -130,6 +130,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleControl(w, r)
 	case rest == "/api/control/health":
 		s.handleHealth(w, r)
+	case rest == "/api/control/core":
+		s.handleCoreRestart(w, r)
 	case rest == "/api/control/job":
 		s.handleJob(w, r)
 	case rest == "/api/control/check":
