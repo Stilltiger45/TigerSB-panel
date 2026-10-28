@@ -690,10 +690,7 @@ function naiveCard() {
   const bbrNote = el("span", { class: "hint warn", text: "Ядро сервера пока не разрешает BBR: обновите панель, установщик его включит." });
   const sync = () => {
     hint.textContent = naivePortText(p);
-    quicNote.textContent = {
-      both: "Приложение TigerSB подключается к NaïveProxy по TCP; по QUIC пока умеют NekoBox и v2rayN.",
-      quic: "Приложение TigerSB пока не умеет NaïveProxy по QUIC и не получит его в подписке; по QUIC умеют NekoBox и v2rayN.",
-    }[p.network] || "";
+    quicNote.textContent = p.network === "tcp" ? "" : "QUIC умеют приложение TigerSB (после обновления), NekoBox и v2rayN; старые версии TigerSB берут только TCP.";
     quicNote.hidden = !quicNote.textContent;
     bbrNote.hidden = protoData.bbr_ready || p.network === "quic";
   };

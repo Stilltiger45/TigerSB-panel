@@ -293,8 +293,7 @@ func NaiveLinks(s Settings, address, domain string, haveCert bool, u store.User)
 	return out
 }
 
-// IsNaiveQUIC tells a naive+quic:// link, which the TigerSB app cannot use
-// yet.
+// IsNaiveQUIC tells a naive+quic:// link.
 func IsNaiveQUIC(l core.Link) bool { return strings.HasPrefix(l.URL, "naive+quic://") }
 
 // MieruLinks returns the mierus:// link of a user when Mieru is on, in the
