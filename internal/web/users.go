@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
@@ -206,9 +207,13 @@ func (s *Server) live(ctx context.Context, f func(xray.Settings) error) string {
 	warning := ""
 	if domain, err := s.domain(ctx); err != nil {
 		log.Printf("sing-box live change: %v", err)
-	} else if err := s.Singbox.Sync(ctx, s.store, domain, true); err != nil {
-		log.Printf("sing-box live change: %v", err)
-		warning = "Изменение сохранено, но " + err.Error() + "."
+	} else {
+		for _, rt := range []*singbox.Runtime{s.Singbox, s.Mieru} {
+			if err := rt.Sync(ctx, s.store, domain, true); err != nil {
+				log.Printf("%s live change: %v", rt.Name, err)
+				warning = "Изменение сохранено, но " + err.Error() + "."
+			}
+		}
 	}
 	if s.xrayState() != "active" {
 		return warning

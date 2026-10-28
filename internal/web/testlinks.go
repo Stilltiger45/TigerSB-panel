@@ -12,7 +12,7 @@ import (
 )
 
 // testProtocols are the protocols that can have a test link.
-var testProtocols = []string{xray.GRPCTag, xray.XHTTPTag, singbox.TUICTag, singbox.Hy2Tag}
+var testProtocols = []string{xray.GRPCTag, xray.XHTTPTag, singbox.TUICTag, singbox.Hy2Tag, singbox.NaiveTag, singbox.MieruTag}
 
 // testLinks returns the test link of every protocol that has one, or "" for
 // a protocol that is off now: its link works again once it is on.
@@ -27,6 +27,8 @@ func (s *Server) testLinks(ctx context.Context, set xray.Settings, sb singbox.Se
 		links := xray.Links(set, addr, u)
 		links = append(links, singbox.Links(sb, addr, domain, s.Singbox.HaveCert(), u)...)
 		links = append(links, singbox.Hy2Links(sb, addr, domain, s.Singbox.HaveCert(), u)...)
+		links = append(links, singbox.NaiveLinks(sb, addr, domain, s.Singbox.HaveCert(), u)...)
+		links = append(links, singbox.MieruLinks(sb, addr, u)...)
 		out[u.Only] = ""
 		for _, l := range links {
 			if l.Protocol == u.Only {
@@ -83,13 +85,17 @@ func (s *Server) handleTestLink(w http.ResponseWriter, r *http.Request) {
 // applyTest tells the running core of a protocol about its new test link.
 // Xray swaps it live; sing-box rereads its config like on a user change.
 func (s *Server) applyTest(ctx context.Context, protocol, uuid string) string {
-	if protocol == singbox.TUICTag || protocol == singbox.Hy2Tag {
+	if protocol != xray.GRPCTag && protocol != xray.XHTTPTag {
+		rt := s.Singbox
+		if protocol == singbox.MieruTag {
+			rt = s.Mieru
+		}
 		domain, err := s.domain(ctx)
 		if err == nil {
-			err = s.Singbox.Sync(ctx, s.store, domain, true)
+			err = rt.Sync(ctx, s.store, domain, true)
 		}
 		if err != nil {
-			log.Printf("sing-box test link: %v", err)
+			log.Printf("%s test link: %v", rt.Name, err)
 			return "Ссылка сохранена, но " + err.Error() + "."
 		}
 		return ""

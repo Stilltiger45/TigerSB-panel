@@ -58,12 +58,13 @@ func newTestServer(t *testing.T) *Server {
 			return "", errors.New("no docker here")
 		},
 	}
-	s.Singbox = &singbox.Runtime{
-		Dir: filepath.Join(dir, "singbox"), Certs: s.Site.Dir, Image: "singbox:test",
-		Exec: func(context.Context, []byte, string, ...string) (string, error) {
-			return "", errors.New("no docker here")
-		},
+	noDocker := func(context.Context, []byte, string, ...string) (string, error) {
+		return "", errors.New("no docker here")
 	}
+	s.Singbox = singbox.DefaultRuntime(dir)
+	s.Singbox.Certs, s.Singbox.Image, s.Singbox.Exec = s.Site.Dir, "singbox:test", noDocker
+	s.Mieru = singbox.MieruRuntime(dir)
+	s.Mieru.Image, s.Mieru.Binary, s.Mieru.Exec = "singbox:test", "/opt/mbox", noDocker
 	s.LocalIPs = func() ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.9")}, nil }
 	return s
 }

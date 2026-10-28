@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -33,6 +34,8 @@ type protocolsResponse struct {
 	Congestion   []string       `json:"congestion_controls"`
 	RelayModes   []string       `json:"udp_relay_modes"`
 	BBRProfiles  []string       `json:"bbr_profiles"`
+	MieruModes   []string       `json:"mieru_transports"`
+	MieruState   string         `json:"mieru_state"`
 	Xray         string         `json:"xray"`
 	SingboxState string         `json:"singbox_state"`
 	Edge         string         `json:"edge"`
@@ -91,6 +94,8 @@ func (s *Server) protocolsState(ctx context.Context) (*protocolsResponse, error)
 		Congestion:   singbox.CongestionControls,
 		RelayModes:   singbox.UDPRelayModes,
 		BBRProfiles:  singbox.BBRProfiles,
+		MieruModes:   singbox.MieruTransports,
+		MieruState:   service.UnitState(s.Run, singbox.MieruUnit),
 		Xray:         s.xrayState(),
 		SingboxState: service.UnitState(s.Run, singbox.Unit),
 		Edge:         service.UnitState(s.Run, xray.EdgeUnit),
@@ -157,15 +162,25 @@ func (s *Server) handleProtocols(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := tcpClash(set, sb, s.panelPort()); err != nil {
+		badRequest(w, err.Error())
+		return
+	}
 	// Each core restarts only when its own settings changed, so tuning TUIC
 	// or Hysteria 2 keeps Xray's connections and the other way round.
-	xrayChanged, sbChanged := !sameJSON(set, oldSet), !sameJSON(sb, oldSB)
+	// Mieru lives in the same settings but in a container of its own.
+	noMieru := func(x singbox.Settings) singbox.Settings {
+		x.Mieru = singbox.Mieru{}
+		return x
+	}
+	xrayChanged, sbChanged := !sameJSON(set, oldSet), !sameJSON(noMieru(sb), noMieru(oldSB))
+	mieruChanged := !sameJSON(sb.Mieru, oldSB.Mieru)
 	users, err := s.store.CoreUsers(ctx)
 	if err != nil {
 		internalError(w)
 		return
 	}
-	var xrayConf, sbConf []byte
+	var xrayConf, sbConf, mieruConf []byte
 	if xrayChanged {
 		if xrayConf, err = xray.Render(set, users); err != nil {
 			internalError(w)
@@ -173,7 +188,13 @@ func (s *Server) handleProtocols(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if sbChanged {
-		if sbConf, err = singbox.Render(sb, users, domain, s.Singbox.HaveCert()); err != nil {
+		if sbConf, err = s.Singbox.Render(sb, users, domain); err != nil {
+			internalError(w)
+			return
+		}
+	}
+	if mieruChanged {
+		if mieruConf, err = s.Mieru.Render(sb, users, domain); err != nil {
 			internalError(w)
 			return
 		}
@@ -190,6 +211,14 @@ func (s *Server) handleProtocols(w http.ResponseWriter, r *http.Request) {
 	}
 	if sbChanged {
 		if err := s.Singbox.Test(ctx, sbConf); errors.Is(err, core.ErrNoDocker) {
+			unchecked = append(unchecked, err.Error())
+		} else if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+	}
+	if mieruChanged {
+		if err := s.Mieru.Test(ctx, mieruConf); errors.Is(err, core.ErrNoDocker) {
 			unchecked = append(unchecked, err.Error())
 		} else if err != nil {
 			badRequest(w, err.Error())
@@ -219,15 +248,23 @@ func (s *Server) handleProtocols(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if sbChanged {
+	if sbChanged || mieruChanged {
 		if err := singbox.Save(ctx, s.store, sb); err != nil {
 			internalError(w)
 			return
 		}
-		if err := s.Singbox.Sync(ctx, s.store, domain, warning == ""); err != nil {
+	}
+	for _, c := range []struct {
+		changed bool
+		rt      *singbox.Runtime
+	}{{sbChanged, s.Singbox}, {mieruChanged, s.Mieru}} {
+		if !c.changed {
+			continue
+		}
+		if err := c.rt.Sync(ctx, s.store, domain, warning == ""); err != nil {
 			warning = "Настройки сохранены, но " + err.Error()
 		} else if warning == "" {
-			applied = append(applied, "sing-box перечитал настройки")
+			applied = append(applied, c.rt.Name+" перечитал настройки")
 		}
 	}
 	resp, err := s.protocolsState(ctx)
@@ -238,6 +275,39 @@ func (s *Server) handleProtocols(w http.ResponseWriter, r *http.Request) {
 	resp.Warning = warning
 	resp.Applied = strings.Join(applied, ", ")
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// tcpClash catches NaïveProxy or Mieru on a TCP port that Xray or the panel
+// holds; each core checks only its own ports.
+func tcpClash(set xray.Settings, sb singbox.Settings, panelPort int) error {
+	type user struct {
+		name string
+		has  func(int) bool
+	}
+	var users []user
+	if n := sb.Naive; n.Enabled {
+		users = append(users, user{"NaïveProxy", func(p int) bool { return p == n.Port }})
+	}
+	if m := sb.Mieru; m.Enabled && m.Transport == "TCP" {
+		users = append(users, user{"Mieru", sb.MieruHas})
+	}
+	for _, u := range users {
+		for port, busy := range xray.Reserved(panelPort) {
+			if u.has(port) {
+				return fmt.Errorf("%s: порт %d занят: %s", u.name, port, busy)
+			}
+		}
+		for _, p := range []struct {
+			name    string
+			enabled bool
+			port    int
+		}{{"gRPC", set.GRPC.Enabled, set.GRPC.Port}, {"XHTTP", set.XHTTP.Enabled, set.XHTTP.Port}} {
+			if p.enabled && u.has(p.port) {
+				return fmt.Errorf("%s и %s оба работают по TCP, им нужны разные порты, а не %d", u.name, p.name, p.port)
+			}
+		}
+	}
+	return nil
 }
 
 // sameJSON compares settings the way they are stored.

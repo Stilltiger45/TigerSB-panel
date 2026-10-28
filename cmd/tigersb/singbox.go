@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,22 +19,31 @@ func (e *env) singbox() *singbox.Runtime {
 	return singbox.DefaultRuntime(filepath.Dir(e.cfg.DBPath))
 }
 
-// cmdSingbox runs the sing-box container (run, stop, reload: called by
+func (e *env) mieru() *singbox.Runtime {
+	return singbox.MieruRuntime(filepath.Dir(e.cfg.DBPath))
+}
+
+// cmdSingbox runs a sing-box container (run, stop, reload: called by
 // systemd), writes the config and reloads it (apply), or shows the state.
-func cmdSingbox(args []string) error {
+// cmd is "singbox" for sing-box itself or "mieru" for mbox, which serves
+// Mieru from the same image.
+func cmdSingbox(cmd string, args []string) error {
 	if len(args) == 0 {
-		return errors.New("использование: tigersb singbox status | singbox apply | singbox image | singbox run | singbox stop | singbox reload")
+		return fmt.Errorf("использование: tigersb %[1]s status | %[1]s apply | %[1]s image | %[1]s run | %[1]s stop | %[1]s reload", cmd)
 	}
 	if args[0] == "image" {
 		// The installer pulls this image before the first start.
 		fmt.Println(singbox.DefaultRuntime("").Image)
 		return nil
 	}
-	e, err := openEnv("singbox", args[1:])
+	e, err := openEnv(cmd, args[1:])
 	if err != nil {
 		return err
 	}
 	rt := e.singbox()
+	if cmd == "mieru" {
+		rt = e.mieru()
+	}
 	ctx := context.Background()
 	switch args[0] {
 	case "run":
@@ -48,21 +57,23 @@ func cmdSingbox(args []string) error {
 			return core.ErrNoDocker
 		}
 		rt.Remove(ctx)
-		// systemd watches docker itself, so a crash of sing-box restarts the unit.
+		// systemd watches docker itself, so a crash of the core restarts the unit.
 		return syscall.Exec(docker, append([]string{"docker"}, rt.RunArgs()...), os.Environ())
 	case "stop":
 		e.st.Close()
-		_, err := rt.Exec(ctx, nil, "docker", "stop", "-t", "5", singbox.Container)
+		_, err := rt.Exec(ctx, nil, "docker", "stop", "-t", "5", rt.Container)
 		return err
 	case "reload":
 		e.st.Close()
 		return rt.Signal(ctx)
 	case "apply":
 		defer e.st.Close()
-		if _, err := rt.CopyCert(e.set.Domain, time.Now()); err != nil {
-			return err
+		if rt.Certs != "" {
+			if _, err := rt.CopyCert(e.set.Domain, time.Now()); err != nil {
+				return err
+			}
 		}
-		_, conf, err := singbox.Build(ctx, e.st, e.set.Domain, rt.HaveCert())
+		_, conf, err := rt.Build(ctx, e.st, e.set.Domain)
 		if err != nil {
 			return err
 		}
@@ -72,17 +83,26 @@ func cmdSingbox(args []string) error {
 		if err := rt.Sync(ctx, e.st, e.set.Domain, false); err != nil {
 			return err
 		}
-		if _, err := rt.Exec(ctx, nil, "systemctl", "restart", singbox.Unit); err != nil {
-			return fmt.Errorf("sing-box не перезапустился. Подробности: journalctl -u %s", singbox.Unit)
+		if err := rt.Restart(ctx); err != nil {
+			return err
 		}
-		fmt.Println("Настройки sing-box применены.")
+		fmt.Printf("Настройки %s применены.\n", rt.Name)
 		return nil
 	case "status":
 		defer e.st.Close()
-		fmt.Println("sing-box (Docker):", service.UnitState(service.ExecRunner, singbox.Unit))
+		fmt.Printf("%s (Docker): %s\n", rt.Name, service.UnitState(service.ExecRunner, rt.Unit))
 		s, err := singbox.Load(ctx, e.st)
 		if err != nil {
 			return err
+		}
+		if cmd == "mieru" {
+			m := s.Mieru
+			if !m.Enabled {
+				fmt.Println("Mieru: выключен")
+			} else {
+				fmt.Printf("Mieru: порты %d-%d/%s\n", m.PortFrom, m.PortTo, strings.ToLower(m.Transport))
+			}
+			return nil
 		}
 		switch {
 		case !s.TUIC.Enabled:
@@ -105,8 +125,16 @@ func cmdSingbox(args []string) error {
 		default:
 			fmt.Printf("Hysteria 2: порт %d/udp, SNI %s, %s\n", h.Port, e.set.Domain, obfs)
 		}
+		switch n := s.Naive; {
+		case !n.Enabled:
+			fmt.Println("NaïveProxy: выключен")
+		case !singbox.ServingNaive(s, e.set.Domain, rt.HaveCert()):
+			fmt.Printf("NaïveProxy: порт %d/tcp, ждёт домен и сертификат\n", n.Port)
+		default:
+			fmt.Printf("NaïveProxy: порт %d/tcp, SNI %s\n", n.Port, e.set.Domain)
+		}
 		return nil
 	}
 	e.st.Close()
-	return fmt.Errorf("неизвестная команда singbox %s", args[0])
+	return fmt.Errorf("неизвестная команда %s %s", cmd, args[0])
 }

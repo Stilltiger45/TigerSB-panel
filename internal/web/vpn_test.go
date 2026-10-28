@@ -76,6 +76,7 @@ func vpnServer(t *testing.T) (*Server, *fakeXray, *http.Cookie) {
 	f := &fakeXray{}
 	s.Xray.Exec = f.exec
 	s.Singbox.Exec = f.exec
+	s.Mieru.Exec = f.exec
 	s.Run = func(name string, args ...string) (string, error) {
 		if name == "systemctl" && args[0] == "is-active" {
 			return "active", nil
@@ -404,7 +405,7 @@ func TestCoreRestart(t *testing.T) {
 	coreSettle = 0
 	defer func() { coreSettle = old }()
 	api := "/" + secret + "/api/control/core"
-	for core, unit := range map[string]string{"xray": xray.Unit, "singbox": singbox.Unit} {
+	for core, unit := range map[string]string{"xray": xray.Unit, "singbox": singbox.Unit, "mieru": singbox.MieruUnit} {
 		w := do(s, http.MethodPost, api, `{"core":"`+core+`"}`, c)
 		if w.Code != http.StatusOK || !strings.Contains(f.joined(), "systemctl restart "+unit) {
 			t.Fatalf("%s: %d %s\n%s", core, w.Code, w.Body, f.joined())
@@ -415,7 +416,7 @@ func TestCoreRestart(t *testing.T) {
 				Results []struct{ ID string } `json:"results"`
 			} `json:"health"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || len(resp.Cores) != 2 || resp.Cores[0].State != "active" || len(resp.Health.Results) == 0 {
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || len(resp.Cores) != 3 || resp.Cores[0].State != "active" || len(resp.Health.Results) == 0 {
 			t.Fatalf("%s: %s", core, w.Body)
 		}
 	}
@@ -472,5 +473,25 @@ func TestTestLinks(t *testing.T) {
 	}
 	if w := do(s, http.MethodPost, "/"+secret+"/api/protocols/test", `{"protocol":"ssh"}`, c); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown protocol: %d", w.Code)
+	}
+}
+
+func TestTCPClash(t *testing.T) {
+	set, _ := xray.Defaults()
+	sb, _ := singbox.Defaults()
+	if err := tcpClash(set, sb, 2053); err != nil {
+		t.Fatalf("defaults: %v", err)
+	}
+	sb.Naive.Port = set.GRPC.Port
+	if err := tcpClash(set, sb, 2053); err == nil || !strings.Contains(err.Error(), "NaïveProxy и gRPC") {
+		t.Fatalf("naive on gRPC: %v", err)
+	}
+	sb, _ = singbox.Defaults()
+	if err := tcpClash(set, sb, 2015); err == nil || !strings.Contains(err.Error(), "Mieru: порт 2015 занят: панель") {
+		t.Fatalf("panel in Mieru's range: %v", err)
+	}
+	sb.Mieru.Transport = "UDP"
+	if err := tcpClash(set, sb, 2015); err != nil {
+		t.Fatalf("Mieru over UDP leaves TCP alone: %v", err)
 	}
 }

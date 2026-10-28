@@ -55,7 +55,8 @@ type controlResponse struct {
 func (s *Server) cores() []coreView {
 	return []coreView{
 		{ID: "xray", Title: "Xray", Protocols: "gRPC, XHTTP", State: service.UnitState(s.Run, xray.Unit)},
-		{ID: "singbox", Title: "sing-box", Protocols: "TUIC, Hysteria 2", State: service.UnitState(s.Run, singbox.Unit)},
+		{ID: "singbox", Title: "sing-box", Protocols: "TUIC, Hysteria 2, NaïveProxy", State: service.UnitState(s.Run, singbox.Unit)},
+		{ID: "mieru", Title: "mbox", Protocols: "Mieru", State: service.UnitState(s.Run, singbox.MieruUnit)},
 	}
 }
 
@@ -224,6 +225,8 @@ func (s *Server) handleCoreRestart(w http.ResponseWriter, r *http.Request) {
 		}
 	case "singbox":
 		err = s.Singbox.Restart(ctx)
+	case "mieru":
+		err = s.Mieru.Restart(ctx)
 	default:
 		badRequest(w, "нет такого ядра")
 		return
