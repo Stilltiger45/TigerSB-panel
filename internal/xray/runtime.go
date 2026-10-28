@@ -169,14 +169,17 @@ func tags(s Settings) []string {
 func (r *Runtime) AddUser(ctx context.Context, s Settings, u store.User) error {
 	var inbounds []obj
 	for _, tag := range tags(s) {
+		if !Serves(u, tag) {
+			continue
+		}
 		// Only the tag and the clients matter; Xray still wants a valid
 		// listen address and port to parse the inbound.
 		inbounds = append(inbounds, obj{
 			"tag": tag, "protocol": "vless", "listen": "127.0.0.1", "port": 1,
-			"settings": obj{"clients": clients([]store.User{u}), "decryption": "none"},
+			"settings": obj{"clients": clients([]store.User{u}, tag), "decryption": "none"},
 		})
 	}
-	if len(inbounds) == 0 || !u.Enabled {
+	if len(inbounds) == 0 {
 		return nil
 	}
 	b, _ := json.Marshal(obj{"inbounds": inbounds})
@@ -193,8 +196,20 @@ func (r *Runtime) AddUser(ctx context.Context, s Settings, u store.User) error {
 // RemoveUser takes a user out of the running Xray; existing connections of
 // that user end.
 func (r *Runtime) RemoveUser(ctx context.Context, s Settings, id int64) error {
-	for _, tag := range tags(s) {
-		out, err := r.api(ctx, nil, "rmu", "-tag="+tag, Email(id))
+	return r.remove(ctx, tags(s), Email(id))
+}
+
+// RemoveTest takes the test link of a protocol out of the running Xray.
+func (r *Runtime) RemoveTest(ctx context.Context, s Settings, tag string) error {
+	if !slices.Contains(tags(s), tag) {
+		return nil
+	}
+	return r.remove(ctx, []string{tag}, Name(store.User{Only: tag}))
+}
+
+func (r *Runtime) remove(ctx context.Context, tags []string, name string) error {
+	for _, tag := range tags {
+		out, err := r.api(ctx, nil, "rmu", "-tag="+tag, name)
 		if errors.Is(err, ErrNoDocker) {
 			return err
 		}
@@ -356,7 +371,7 @@ func Build(ctx context.Context, st *store.Store, domain string) (Settings, []byt
 	if err != nil {
 		return s, nil, edge.Routes{}, err
 	}
-	users, err := st.Users(ctx)
+	users, err := st.CoreUsers(ctx)
 	if err != nil {
 		return s, nil, edge.Routes{}, err
 	}

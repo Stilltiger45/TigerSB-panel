@@ -50,7 +50,7 @@ func tlsConf(domain string) obj {
 	}
 }
 
-// Render builds the sing-box config. Users are named like in Xray (u<id>).
+// Render builds the sing-box config. Users are named like in Xray (xray.Name).
 // Logs are off, so no client address is written anywhere. Connections to
 // private and loopback addresses are refused, which keeps the panel, the
 // Xray API and the server's neighbours out of reach through the VPN.
@@ -60,8 +60,8 @@ func Render(s Settings, users []store.User, domain string, haveCert bool) ([]byt
 		t := s.TUIC
 		list := []obj{}
 		for _, u := range users {
-			if u.Enabled {
-				list = append(list, obj{"name": xray.Email(u.ID), "uuid": u.UUID, "password": s.Password(u.UUID)})
+			if xray.Serves(u, TUICTag) {
+				list = append(list, obj{"name": xray.Name(u), "uuid": u.UUID, "password": s.Password(u.UUID)})
 			}
 		}
 		in := obj{
@@ -108,8 +108,8 @@ func hy2Inbound(s Settings, users []store.User, domain string) obj {
 	h := s.Hysteria2
 	list := []obj{}
 	for _, u := range users {
-		if u.Enabled {
-			list = append(list, obj{"name": xray.Email(u.ID), "password": s.Hy2Password(u.UUID)})
+		if xray.Serves(u, Hy2Tag) {
+			list = append(list, obj{"name": xray.Name(u), "password": s.Hy2Password(u.UUID)})
 		}
 	}
 	in := obj{

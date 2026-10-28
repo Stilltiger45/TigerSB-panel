@@ -160,6 +160,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSNICheck(w, r)
 	case rest == "/api/protocols/scan":
 		s.handleScan(w, r)
+	case rest == "/api/protocols/test":
+		s.handleTestLink(w, r)
+	case rest == "/api/protocols/test/qr":
+		s.handleTestQR(w, r)
 	case rest == "/stub/preview":
 		s.handleStubPreview(w, r)
 	case strings.HasPrefix(rest, "/static/"):

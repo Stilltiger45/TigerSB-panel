@@ -214,7 +214,7 @@ func Build(ctx context.Context, st *store.Store, domain string, haveCert bool) (
 	if err != nil {
 		return s, nil, err
 	}
-	users, err := st.Users(ctx)
+	users, err := st.CoreUsers(ctx)
 	if err != nil {
 		return s, nil, err
 	}

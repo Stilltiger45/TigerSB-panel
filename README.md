@@ -47,7 +47,7 @@ It is made for the [TigerSB](https://github.com/Stilltiger45/TigerSB-client) app
 - **Stays hidden.** The panel opens only on a secret address; every other address shows a harmless "Maintenance" page. «Закрыть панель» (Close panel) hides the secret address too, and only SSH can open it again.
 - **A user in two clicks:** a name and a device count. Each user gets a `tigersb://` key and an `https://` subscription, both with a QR code.
 - **Device limit.** Extra phones and computers get no subscription, and any device can be removed with a button.
-- **Four protocols:** VLESS + REALITY over XHTTP and gRPC, TUIC and Hysteria 2. Everything is set up from the start; changing anything is optional.
+- **Four protocols:** VLESS + REALITY over XHTTP and gRPC, TUIC and Hysteria 2. Everything is set up from the start; changing anything is optional. Each protocol can get its own test link to check it alone.
 - **Watches the server:** load charts and health checks with a hint on what to do when something is wrong.
 - **Updates with a button** and rolls back by itself if the new version does not start.
 
