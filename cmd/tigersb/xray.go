@@ -16,6 +16,7 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/edge"
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
 
@@ -126,7 +127,9 @@ func cmdEdge(args []string) error {
 	if err != nil {
 		return err
 	}
-	srv := &edge.Server{Path: rt.Routes}
+	// The ports it holds for sing-box come from the file sing-box's Sync
+	// writes.
+	srv := &edge.Server{Path: rt.Routes, Forwards: singbox.ForwardsPath(filepath.Dir(e.cfg.DBPath))}
 	srv.Reload()
 	stop := make(chan struct{})
 	go srv.Watch(2*time.Second, stop)
@@ -136,6 +139,7 @@ func cmdEdge(args []string) error {
 		<-ctx.Done()
 		close(stop)
 		ln.Close()
+		srv.CloseForwards()
 	}()
 	log.Printf("edge: слушаю :%d", xray.EdgePort)
 	return srv.Serve(ln)

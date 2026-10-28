@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/core"
+	"github.com/Stilltiger45/TigerSB-panel/internal/edge"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 )
 
@@ -57,6 +58,9 @@ type Runtime struct {
 	// Restarts is set for mbox: its Mieru inbound keeps the old users over
 	// a SIGHUP reload, so a change restarts the container instead.
 	Restarts bool
+	// Forwards is the edge's file of ports it holds for this core,
+	// /var/lib/tigersb/edge/ports.json; empty for mbox.
+	Forwards string
 	Exec     core.Exec
 	render   func(s Settings, users []store.User, domain string, haveCert bool) ([]byte, error)
 }
@@ -73,13 +77,17 @@ func image() string {
 func DefaultRuntime(dataDir string) *Runtime {
 	return &Runtime{
 		Name: "sing-box", Container: Container, Unit: Unit,
-		Dir:    filepath.Join(dataDir, "singbox"),
-		Certs:  filepath.Join(dataDir, "caddy"),
-		Image:  image(),
-		Exec:   core.RealExec,
-		render: Render,
+		Dir:      filepath.Join(dataDir, "singbox"),
+		Certs:    filepath.Join(dataDir, "caddy"),
+		Forwards: ForwardsPath(dataDir),
+		Image:    image(),
+		Exec:     core.RealExec,
+		render:   Render,
 	}
 }
+
+// ForwardsPath is the edge's file of forwarded ports under dataDir.
+func ForwardsPath(dataDir string) string { return filepath.Join(dataDir, "edge", "ports.json") }
 
 // MieruRuntime is mbox serving Mieru: the same sing-box image runs the mbox
 // binary, so no other image is pulled. TIGERSB_MBOX replaces the binary in
@@ -303,13 +311,19 @@ func (r *Runtime) Sync(ctx context.Context, st *store.Store, domain string, relo
 			return err
 		}
 	}
-	_, conf, err := r.Build(ctx, st, domain)
+	s, conf, err := r.Build(ctx, st, domain)
 	if err != nil {
 		return err
 	}
 	changedConf, err := r.writeFile("config.json", conf)
 	if err != nil {
 		return err
+	}
+	// The edge opens and closes its ports by itself within seconds.
+	if r.Forwards != "" {
+		if err := edge.WriteForwards(r.Forwards, Forwards(s, domain, r.HaveCert())); err != nil {
+			return err
+		}
 	}
 	if reload && (changedCert || changedConf) {
 		return r.Reload(ctx)

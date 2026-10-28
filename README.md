@@ -48,7 +48,7 @@ It is made for the [TigerSB](https://github.com/Stilltiger45/TigerSB-client) app
 - **A user in two clicks:** a name and a device count. Each user gets a `tigersb://` key and an `https://` subscription, both with a QR code.
 - **Device limit.** Extra phones and computers get no subscription, and any device can be removed with a button.
 - **Six protocols:** VLESS + REALITY over XHTTP and gRPC, TUIC, Hysteria 2, NaïveProxy and Mieru. Everything is set up from the start; changing anything is optional. Each protocol can get its own test link to check it alone.
-- **Watches the server:** load charts and health checks with a hint on what to do when something is wrong.
+- **Watches the server:** the Overview tab sums up the whole panel, protocols, users and resources; the Control tab has load charts and health checks with a hint on what to do when something is wrong.
 - **Updates with a button** and rolls back by itself if the new version does not start.
 
 Coming next: a cascade through a routing point in Russia (gRPC and TUIC), XHTTP through Yandex Cloud CDN.
@@ -131,7 +131,7 @@ curl -fsSL https://raw.githubusercontent.com/Stilltiger45/TigerSB-panel/main/scr
 ## How it works
 
 - **One Go binary, `tigersb`,** and several `tigersb-*` systemd services: the web panel, the port 443 splitter, subscriptions, Caddy, Xray, sing-box, Mieru, the health check timer and the updater. All data lives in SQLite under `/var/lib/tigersb`.
-- **Port 443 is shared.** The `tigersb-edge` service reads the SNI and hands the connection either to Caddy (site, panel, subscriptions) or to the matching Xray protocol. Hysteria 2 takes UDP 443, TUIC takes UDP 8443, NaïveProxy takes TCP 2443, Mieru takes TCP 2012–2022.
+- **Port 443 is shared.** The `tigersb-edge` service reads the SNI and hands the connection either to Caddy (site, panel, subscriptions) or to the matching Xray protocol. Hysteria 2 takes UDP 443, TUIC takes UDP 8443, NaïveProxy takes TCP 2443 (held by `tigersb-edge` so it can turn on BBR; optionally QUIC on UDP 2443 too), Mieru takes TCP 2012–2022.
 - **The panel writes the configs**, has the core itself check them, and only then applies them. Users are added to Xray through its API without a restart.
 - **Subscriptions** come from a separate `tigersb-sub` service, so they keep working while the panel is closed or asleep. The TigerSB app gets a signed profile, other clients get a list of `vless://` links.
 - **Updates** run in a separate service outside the panel: restore point, install, check, rollback on failure.

@@ -36,6 +36,7 @@ function showTab() {
     else a.removeAttribute("aria-current");
   }
   for (const id of TABS) $("tab-" + id).hidden = id !== known;
+  if (known === "overview") loadOverview();
   if (known === "control") loadControl();
   if (known === "users") loadUsers();
   if (known === "protocols") loadProtocols();
@@ -597,6 +598,139 @@ $("p-create").addEventListener("click", async () => {
     $("p-create").disabled = false;
   }
 });
+
+// ---- Overview: the whole panel at a glance, from every other tab ----
+
+function checkItem(title, cls, text, detail) {
+  const li = document.createElement("li");
+  const b = document.createElement("b");
+  b.textContent = title;
+  const pill = document.createElement("span");
+  pill.className = "pill " + cls;
+  pill.textContent = text;
+  li.append(b, pill);
+  if (detail) {
+    const d = document.createElement("span");
+    d.className = "detail";
+    d.textContent = detail;
+    li.append(d);
+  }
+  return li;
+}
+
+function fact(list, name, value) {
+  const dt = document.createElement("dt");
+  dt.textContent = name;
+  const dd = document.createElement("dd");
+  dd.textContent = value;
+  list.append(dt, dd);
+  return dd;
+}
+
+async function loadOverview() {
+  try {
+    renderOverview(await api("api/overview"));
+  } catch (err) {
+    $("ov-state-text").textContent = err.message;
+  }
+}
+
+function renderOverview(d) {
+  const services = [
+    ...d.cores.map((c) => ({ id: c.id, title: c.title, detail: c.protocols, state: c.state })),
+    { id: "edge", title: "Порт 443", detail: "tigersb-edge: сайт, панель и протоколы на 443", state: d.edge },
+    { id: "sub", title: "Подписки", detail: "tigersb-sub", state: d.sub },
+  ];
+  // Problems: protocols and services right now, the rest from the last
+  // full check. Services shown live are not taken from the check again.
+  const problems = d.protocols.filter((p) => p.state === "fail" || p.state === "warn");
+  for (const sv of services) {
+    if (sv.state !== "active") problems.push({ title: sv.title, state: "fail", detail: `${sv.detail}: ${(UNIT[sv.state] || ["", sv.state])[1]}.` });
+  }
+  const live = new Set(services.map((sv) => sv.id));
+  for (const r of (d.health && d.health.results) || []) {
+    if ((r.state === "fail" || r.state === "warn") && !live.has(r.id)) problems.push(r);
+  }
+  problems.sort((a, b) => (a.state === "fail" ? 0 : 1) - (b.state === "fail" ? 0 : 1));
+  const bad = problems.filter((p) => p.state === "fail").length;
+  const pill = $("ov-state");
+  if (bad) [pill.className, pill.textContent] = ["pill bad", `ошибок: ${bad}`];
+  else if (problems.length) [pill.className, pill.textContent] = ["pill warn", `предупреждений: ${problems.length}`];
+  else [pill.className, pill.textContent] = ["pill ok", "всё работает"];
+  $("ov-state-text").textContent = (d.health
+    ? `Протоколы и службы — прямо сейчас, остальное — по полной проверке ${when(d.health.checked)}.`
+    : "Протоколы и службы — прямо сейчас. Полной проверки ещё не было: её делает монитор раз в 5 минут или кнопка на вкладке «Контроль».");
+  const list = $("ov-problems");
+  list.replaceChildren(...problems.slice(0, 6).map((p) => checkItem(p.title, (HEALTH[p.state] || ["off"])[0], (HEALTH[p.state] || ["", p.state])[1], p.detail)));
+  if (problems.length > 6) list.append(checkItem(`И ещё ${problems.length - 6}`, "off", "см. «Контроль»", ""));
+  list.hidden = !problems.length;
+
+  $("ov-protocols").replaceChildren(...d.protocols.map((p) => {
+    const [cls, text] = PROTO_STATE[p.state] || ["off", p.state];
+    return checkItem(p.title, cls, text, p.state === "off" ? "" : p.detail);
+  }));
+
+  const u = d.users;
+  const facts = $("ov-users");
+  facts.replaceChildren();
+  fact(facts, "Всего", u.total ? `${u.total}, включены ${u.enabled}` : "пока никого");
+  fact(facts, "В сети сейчас", `${u.online}` + (u.live ? "" : " (данные пятиминутной давности)"));
+  fact(facts, "Устройств", `${u.devices} с подпиской`);
+  if (u.over) fact(facts, "Превышение", `${u.over} — подключено больше устройств, чем разрешено`).className = "error";
+
+  $("ov-cores").replaceChildren(...services.map((sv) => {
+    const [cls, text] = UNIT[sv.state] || ["bad", sv.state];
+    return checkItem(sv.title, cls, text, sv.detail);
+  }));
+
+  const m = d.latest;
+  const meters = $("ov-meters");
+  meters.replaceChildren();
+  $("ov-age").textContent = m ? `сервер работает ${uptime(m.uptime)}` : "";
+  if (!m) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = "Данных пока нет: монитор снимает их раз в 5 минут.";
+    meters.append(p);
+  } else {
+    for (const [name, value, sub] of [
+      ["Процессор", m.cpu || 0, `${m.cores} ядр.`],
+      ["Память", pct(m.mem_used, m.mem_total), `${bytes(m.mem_used)} из ${bytes(m.mem_total)}`],
+      ["Диск", pct(m.disk_used, m.disk_total), `свободно ${bytes(m.disk_total - m.disk_used)}`],
+    ]) {
+      const box = document.createElement("div");
+      box.className = "meter";
+      const label = document.createElement("span");
+      label.className = "muted";
+      label.textContent = name;
+      const b = document.createElement("b");
+      b.textContent = Math.round(value) + "%";
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      const i = document.createElement("i");
+      i.style.width = Math.max(0, Math.min(100, value)) + "%";
+      i.classList.toggle("hot", value >= 90);
+      bar.append(i);
+      const s = document.createElement("span");
+      s.className = "faint";
+      s.textContent = sub;
+      box.append(label, b, bar, s);
+      meters.append(box);
+    }
+  }
+
+  const c = d.update.check;
+  const up = $("ov-update");
+  up.replaceChildren();
+  if (c && c.available) {
+    const a = document.createElement("a");
+    a.href = "#control";
+    a.textContent = `есть ${c.latest}`;
+    up.append(a);
+  } else up.textContent = c && c.latest ? "установлена последняя" : c && c.error ? "не удалось проверить" : "не проверялось";
+}
+
+$("ov-refresh").addEventListener("click", loadOverview);
 
 async function load() {
   showTab();

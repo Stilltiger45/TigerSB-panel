@@ -24,38 +24,68 @@
 </header>
 
 <main class="wrap">
-  <section id="tab-overview" class="grid">
+  <section id="tab-overview" class="stack">
     <div class="glass">
-      <h2>Этот сервер</h2>
-      <dl class="facts">
-        <dt>Роль</dt><dd id="role">—</dd>
-        <dt>Домен</dt><dd id="domain">—</dd>
-        <dt>Версия</dt><dd id="version">—</dd>
-      </dl>
-    </div>
-    <div class="glass">
-      <h2>Доступ к панели</h2>
-      <p><span id="access" class="pill off">проверяю…</span></p>
-      <p id="access-url" class="mono" hidden></p>
-      <p id="access-text" class="muted"></p>
-      <div class="row">
-        <button id="close-panel" class="ghost" type="button" hidden>Закрыть панель</button>
+      <div class="head-row">
+        <h2>Состояние панели</h2>
+        <div class="row">
+          <span id="ov-state" class="pill off">проверяю…</span>
+          <button id="ov-refresh" class="ghost" type="button">Обновить</button>
+        </div>
       </div>
-      <p id="access-msg" class="notice" hidden></p>
+      <p id="ov-state-text" class="muted"></p>
+      <ul class="checks" id="ov-problems" hidden></ul>
     </div>
-    <div class="glass">
-      <h2>Сертификат</h2>
-      <p><span id="ov-cert" class="pill off">проверяю…</span></p>
-      <p id="ov-cert-text" class="muted"></p>
-      <p><a href="#site">Настроить домен и заглушку</a></p>
-    </div>
-    <div class="glass">
-      <h2>Скоро здесь</h2>
-      <ul class="soon">
-        <li>Серверы и точки маршрутизации</li>
-        <li>Подключения: каскад, Yandex CDN</li>
-        <li>CDN-домены</li>
-      </ul>
+    <div class="grid">
+      <div class="glass">
+        <div class="head-row"><h2>Протоколы</h2><a href="#protocols">Настроить</a></div>
+        <ul class="checks" id="ov-protocols"></ul>
+      </div>
+      <div class="glass">
+        <div class="head-row"><h2>Пользователи</h2><a href="#users">Открыть</a></div>
+        <dl class="facts" id="ov-users"></dl>
+      </div>
+      <div class="glass">
+        <div class="head-row"><h2>Ядра и службы</h2><a href="#control">Контроль</a></div>
+        <ul class="checks" id="ov-cores"></ul>
+      </div>
+      <div class="glass">
+        <div class="head-row"><h2>Ресурсы</h2><span class="faint" id="ov-age"></span></div>
+        <div class="meters compact" id="ov-meters"></div>
+      </div>
+      <div class="glass">
+        <h2>Этот сервер</h2>
+        <dl class="facts">
+          <dt>Роль</dt><dd id="role">—</dd>
+          <dt>Домен</dt><dd id="domain">—</dd>
+          <dt>Версия</dt><dd id="version">—</dd>
+          <dt>Обновление</dt><dd id="ov-update">—</dd>
+        </dl>
+      </div>
+      <div class="glass">
+        <h2>Доступ к панели</h2>
+        <p><span id="access" class="pill off">проверяю…</span></p>
+        <p id="access-url" class="mono" hidden></p>
+        <p id="access-text" class="muted"></p>
+        <div class="row">
+          <button id="close-panel" class="ghost" type="button" hidden>Закрыть панель</button>
+        </div>
+        <p id="access-msg" class="notice" hidden></p>
+      </div>
+      <div class="glass">
+        <h2>Сертификат</h2>
+        <p><span id="ov-cert" class="pill off">проверяю…</span></p>
+        <p id="ov-cert-text" class="muted"></p>
+        <p><a href="#site">Настроить домен и заглушку</a></p>
+      </div>
+      <div class="glass">
+        <h2>Скоро здесь</h2>
+        <ul class="soon">
+          <li>Серверы и точки маршрутизации</li>
+          <li>Подключения: каскад, Yandex CDN</li>
+          <li>CDN-домены</li>
+        </ul>
+      </div>
     </div>
   </section>
 
@@ -78,11 +108,11 @@
       <div class="head-row">
         <h2>Пользователи <span class="faint" id="users-count"></span></h2>
         <div class="row">
-          <span id="users-xray" class="pill off">Xray: проверяю…</span>
           <span id="users-sub" class="pill off">Подписки: проверяю…</span>
           <button id="users-refresh" class="ghost" type="button">Обновить</button>
         </div>
       </div>
+      <div class="row proto-pills" id="users-protocols" aria-label="Состояние протоколов"></div>
       <input id="users-filter" class="filter" placeholder="Найти по имени" autocomplete="off" hidden>
       <ul class="users" id="users"></ul>
       <p class="hint" id="users-hint">Устройства считаются по подписке: приложение присылает свой HWID, и сверх лимита подписка новому устройству не выдаётся. Приложения без HWID считаются по одному устройству на приложение. «Удалить» освобождает место. «Новые ссылки» отключают все устройства сразу. Число подключённых к VPN адресов показано отдельно: два телефона за одним роутером дают один адрес.</p>
@@ -100,7 +130,7 @@
           <span id="pr-edge" class="pill off">Порт 443</span>
         </div>
       </div>
-      <p class="muted">Шесть протоколов в трёх контейнерах. gRPC и XHTTP работают в Xray: это VLESS с REALITY, для постороннего взгляда сервер выглядит как сайт из поля SNI, а порт 443 общий с сайтом панели. TUIC, Hysteria 2 и NaïveProxy работают в sing-box с настоящим сертификатом сайта: TUIC и Hysteria 2 — это QUIC по UDP (Hysteria 2 ещё и прячет пакеты маскировкой Salamander), NaïveProxy — HTTP/2 по TCP, как у браузера Chrome. Mieru работает в отдельном контейнере mbox, сборке sing-box от автора Mieru. Все включённые протоколы приходят пользователям в подписке.</p>
+      <p class="muted">Шесть протоколов в трёх контейнерах. gRPC и XHTTP работают в Xray: это VLESS с REALITY, для постороннего взгляда сервер выглядит как сайт из поля SNI, а порт 443 общий с сайтом панели. TUIC, Hysteria 2 и NaïveProxy работают в sing-box с настоящим сертификатом сайта: TUIC и Hysteria 2 — это QUIC по UDP (Hysteria 2 ещё и прячет пакеты маскировкой Salamander), NaïveProxy — HTTP/2 по TCP, как у браузера Chrome, или HTTP/3 по QUIC. Mieru работает в отдельном контейнере mbox, сборке sing-box от автора Mieru. Все включённые протоколы приходят пользователям в подписке.</p>
       <label>Адрес сервера в ссылках
         <input id="pr-address" autocomplete="off" spellcheck="false">
         <span class="hint" id="pr-address-hint"></span>

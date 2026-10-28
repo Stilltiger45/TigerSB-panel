@@ -238,8 +238,13 @@ func checkSingbox(ctx context.Context, e Env, set site.Settings) Result {
 	if sb.Hysteria2.Enabled {
 		on = append(on, proto{"Hysteria 2", sb.Hysteria2.Port, false})
 	}
-	if sb.Naive.Enabled {
-		on = append(on, proto{"NaïveProxy", sb.Naive.Port, true})
+	if n := sb.Naive; n.Enabled {
+		if n.TCP() {
+			on = append(on, proto{"NaïveProxy", n.Port, true})
+		}
+		if n.QUIC() {
+			on = append(on, proto{"NaïveProxy QUIC", n.Port, false})
+		}
 	}
 	var names, ports []string
 	for _, p := range on {

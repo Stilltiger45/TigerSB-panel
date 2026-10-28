@@ -35,6 +35,7 @@ type protocolsResponse struct {
 	RelayModes   []string       `json:"udp_relay_modes"`
 	BBRProfiles  []string       `json:"bbr_profiles"`
 	MieruModes   []string       `json:"mieru_transports"`
+	NaiveModes   []string       `json:"naive_networks"`
 	MieruState   string         `json:"mieru_state"`
 	Xray         string         `json:"xray"`
 	SingboxState string         `json:"singbox_state"`
@@ -95,6 +96,7 @@ func (s *Server) protocolsState(ctx context.Context) (*protocolsResponse, error)
 		RelayModes:   singbox.UDPRelayModes,
 		BBRProfiles:  singbox.BBRProfiles,
 		MieruModes:   singbox.MieruTransports,
+		NaiveModes:   singbox.NaiveNetworks,
 		MieruState:   service.UnitState(s.Run, singbox.MieruUnit),
 		Xray:         s.xrayState(),
 		SingboxState: service.UnitState(s.Run, singbox.Unit),
@@ -285,7 +287,7 @@ func tcpClash(set xray.Settings, sb singbox.Settings, panelPort int) error {
 		has  func(int) bool
 	}
 	var users []user
-	if n := sb.Naive; n.Enabled {
+	if n := sb.Naive; n.Enabled && n.TCP() {
 		users = append(users, user{"NaïveProxy", func(p int) bool { return p == n.Port }})
 	}
 	if m := sb.Mieru; m.Enabled && m.Transport == "TCP" {

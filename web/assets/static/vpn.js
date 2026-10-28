@@ -3,6 +3,18 @@
 
 const UNIT = { active: ["ok", "работает"], activating: ["warn", "запускается"], inactive: ["bad", "остановлен"], failed: ["bad", "ошибка"], unknown: ["off", "нет данных"] };
 
+// PROTO_STATE is how health.Protocols states read.
+const PROTO_STATE = { ok: ["ok", "работает"], warn: ["warn", "ждёт"], fail: ["bad", "не работает"], off: ["off", "выключен"] };
+
+// protoPills shows each protocol as a pill: its name, and what is wrong
+// when it does not work. The detail is in the tooltip.
+function protoPills(box, list) {
+  box.replaceChildren(...(list || []).map((p) => {
+    const [cls, text] = PROTO_STATE[p.state] || ["off", p.state];
+    return el("span", { class: "pill " + cls, title: p.detail, text: p.state === "ok" ? p.title : `${p.title}: ${text}` });
+  }));
+}
+
 function unitPill(el, label, state) {
   const [cls, text] = UNIT[state] || ["bad", state];
   el.className = "pill " + cls;
@@ -77,7 +89,7 @@ function userState(u) {
 
 function renderUsers(d) {
   usersData = d;
-  unitPill($("users-xray"), "Xray", d.xray);
+  protoPills($("users-protocols"), d.protocols);
   unitPill($("users-sub"), "Подписки", d.sub);
   if (d.warning) notice("users-msg", d.warning, true);
   $("users-count").textContent = d.users.length ? `· ${d.users.length}` : "";
@@ -461,7 +473,7 @@ function keysBlock(proto, r) {
 const unfolded = new Set();
 
 // card is one protocol: the name, the core it runs in, on/off and the port
-// in sight; everything else folds away under "Все настройки".
+// in sight; everything else (more) folds away under "Все настройки".
 function card(proto, title, core, p, portRow, more) {
   const enabled = el("input", { type: "checkbox" });
   enabled.checked = p.enabled;
@@ -470,9 +482,13 @@ function card(proto, title, core, p, portRow, more) {
     body.hidden = !p.enabled;
     dirty();
   });
-  const details = el("details", { class: "more" }, el("summary", { text: "Все настройки" }), ...more);
-  details.open = unfolded.has(proto);
-  details.addEventListener("toggle", () => (details.open ? unfolded.add(proto) : unfolded.delete(proto)));
+  // A protocol with nothing more to set has no fold.
+  let details = "";
+  if (more.length) {
+    details = el("details", { class: "more" }, el("summary", { text: "Все настройки" }), ...more);
+    details.open = unfolded.has(proto);
+    details.addEventListener("toggle", () => (details.open ? unfolded.add(proto) : unfolded.delete(proto)));
+  }
   const body = el("div", { class: "proto-body" }, portRow, testBlock(proto, core), details);
   body.hidden = !p.enabled;
   return el("div", { class: "glass proto", id: "proto-" + proto },
@@ -663,14 +679,52 @@ function hy2Card() {
   ]);
 }
 
-// naiveCard is NaïveProxy: only the port, everything else is fixed.
+const NAIVE_NETWORKS = { tcp: "TCP (HTTP/2)", quic: "QUIC (HTTP/3)", both: "TCP и QUIC" };
+
+// naiveCard is NaïveProxy: the port with BBR and the network next to it;
+// there is nothing else to set.
 function naiveCard() {
   const p = protoData.singbox.naive;
-  const port = portInput(p, naivePortText);
-  certHint(port, "NaïveProxy");
-  return card("naive", "NaïveProxy", "sing-box", p, port, [
-    el("p", { class: "hint", text: "HTTP/2 по TCP с сертификатом сайта " + (protoData.domain || "панели") + ": для провайдера это обычный HTTPS. Пароль у каждого пользователя свой и меняется вместе с «Новыми ссылками». Работает в клиенте TigerSB, NekoBox, Hiddify и v2rayN." }),
-  ]);
+  const hint = el("span", { class: "hint", text: naivePortText(p) });
+  const quicNote = el("span", { class: "hint" });
+  const bbrNote = el("span", { class: "hint warn", text: "Ядро сервера пока не разрешает BBR: обновите панель, установщик его включит." });
+  const sync = () => {
+    hint.textContent = naivePortText(p);
+    quicNote.textContent = {
+      both: "Приложение TigerSB подключается к NaïveProxy по TCP; по QUIC пока умеют NekoBox и v2rayN.",
+      quic: "Приложение TigerSB пока не умеет NaïveProxy по QUIC и не получит его в подписке; по QUIC умеют NekoBox и v2rayN.",
+    }[p.network] || "";
+    quicNote.hidden = !quicNote.textContent;
+    bbrNote.hidden = protoData.bbr_ready || p.network === "quic";
+  };
+  const port = el("input", { type: "number", min: 1024, max: 65535, value: p.port, class: "num", "aria-label": "Порт" });
+  port.addEventListener("input", () => {
+    p.port = Number(port.value);
+    sync();
+    dirty();
+  });
+  const bbr = el("input", { type: "checkbox" });
+  bbr.checked = !!p.bbr;
+  bbr.addEventListener("change", () => {
+    p.bbr = bbr.checked;
+    dirty();
+  });
+  const network = el("select", { "aria-label": "Режим" }, ...protoData.naive_networks.map((n) => el("option", { value: n, text: NAIVE_NETWORKS[n] || n })));
+  network.value = p.network;
+  network.addEventListener("change", () => {
+    p.network = network.value;
+    sync();
+    dirty();
+  });
+  const row = el("div", { class: "port-row" },
+    el("span", { class: "label" }, "Порт"),
+    el("div", { class: "port-line" }, port, network, el("label", { class: "check" }, bbr, "BBR")),
+    hint,
+    el("span", { class: "hint", text: "BBR ускоряет скачивание на дальних и нестабильных каналах. Для постороннего это обычный HTTPS сайта " + (protoData.domain || "панели") + "." }),
+    quicNote, bbrNote);
+  sync();
+  certHint(row, "NaïveProxy");
+  return card("naive", "NaïveProxy", "sing-box", p, row, []);
 }
 
 // mieruCard is Mieru: a port range and TCP or UDP, served by mbox.
@@ -697,9 +751,8 @@ function mieruCard() {
     el("span", { class: "label" }, "Порты"),
     el("div", { class: "port-line" }, num("port_from", "Первый порт"), el("span", { class: "muted", text: "—" }), num("port_to", "Последний порт"), transport),
     hint);
-  return card("mieru", "Mieru", "mbox", p, row, [
-    el("p", { class: "hint", text: "Собственный протокол Mieru без TLS: снаружи это поток случайных байтов, а клиент разбрасывает подключения по портам диапазона. Работает в отдельном контейнере mbox — это сборка sing-box от автора Mieru, в официальном sing-box его нет. Пароль у каждого пользователя свой и меняется вместе с «Новыми ссылками». Нужно точное время на сервере и у клиентов. Работает в клиенте TigerSB, Clash Meta (mihomo), NekoBox и Hiddify." }),
-  ]);
+  row.append(el("span", { class: "hint", text: "Без TLS: снаружи поток случайных байтов. Нужно точное время на сервере и у клиентов." }));
+  return card("mieru", "Mieru", "mbox", p, row, []);
 }
 
 function mieruPortText(p) {
@@ -709,13 +762,22 @@ function mieruPortText(p) {
   return `${p.port_to - p.port_from + 1} портов по ${p.transport}. Откройте ${p.port_from}-${p.port_to}/${proto} в файрволе хостинга, если он там есть.`;
 }
 
-function naivePortText(port) {
+function naivePortText(p) {
+  const port = p.port;
   if (port < 1024) return "Можно от 1024: 443 по TCP занят сайтом и Xray.";
-  const busy = protoData.reserved[port];
-  if (busy) return `Занят: ${busy}.`;
   const s = protoData.settings;
-  if ((s.grpc.enabled && s.grpc.port === port) || (s.xhttp.enabled && s.xhttp.port === port)) return "Занят Xray: выберите другой порт.";
-  return `TCP. Откройте ${port}/tcp в файрволе хостинга, если он там есть.`;
+  const sb = protoData.singbox;
+  if (p.network !== "quic") {
+    const busy = protoData.reserved[port];
+    if (busy) return `Занят: ${busy}.`;
+    if ((s.grpc.enabled && s.grpc.port === port) || (s.xhttp.enabled && s.xhttp.port === port)) return "Занят Xray: выберите другой порт.";
+  }
+  if (p.network !== "tcp") {
+    if (sb.tuic.enabled && sb.tuic.port === port) return "Занят TUIC по UDP: выберите другой порт.";
+    if (sb.hysteria2.enabled && sb.hysteria2.port === port) return "Занят Hysteria 2 по UDP: выберите другой порт.";
+  }
+  const open = { tcp: `${port}/tcp`, quic: `${port}/udp`, both: `${port}/tcp и ${port}/udp` }[p.network] || `${port}`;
+  return `Откройте ${open} в файрволе хостинга, если он там есть.`;
 }
 
 function hy2PortText(port) {

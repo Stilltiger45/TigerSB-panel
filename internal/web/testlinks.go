@@ -30,8 +30,9 @@ func (s *Server) testLinks(ctx context.Context, set xray.Settings, sb singbox.Se
 		links = append(links, singbox.NaiveLinks(sb, addr, domain, s.Singbox.HaveCert(), u)...)
 		links = append(links, singbox.MieruLinks(sb, addr, u)...)
 		out[u.Only] = ""
+		// NaïveProxy on TCP and QUIC has two links; the TCP one comes first.
 		for _, l := range links {
-			if l.Protocol == u.Only {
+			if l.Protocol == u.Only && out[u.Only] == "" {
 				out[u.Only] = l.URL
 			}
 		}
