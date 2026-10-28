@@ -66,12 +66,29 @@ type Hysteria2 struct {
 	IgnoreClientBandwidth bool `json:"ignore_client_bandwidth"`
 }
 
-// Naive is the NaïveProxy inbound: HTTP/2 CONNECT over TLS on a TCP port.
+// Naive is the NaïveProxy inbound: CONNECT over TLS, HTTP/2 on TCP or
+// HTTP/3 on QUIC, or both on the same port number.
 type Naive struct {
 	Enabled bool `json:"enabled"`
-	// Port is a TCP port of its own: 443 belongs to the site and Xray.
+	// Port is a port of its own: TCP 443 belongs to the site and Xray.
 	Port int `json:"port"`
+	// Network is NaiveTCP, NaiveQUIC or NaiveBoth.
+	Network string `json:"network"`
+	// BBR picks BBR for both: on TCP the edge sets it on the client's
+	// connection, on QUIC sing-box uses it instead of CUBIC.
+	BBR bool `json:"bbr"`
 }
+
+// NaïveProxy networks.
+const (
+	NaiveTCP  = "tcp"
+	NaiveQUIC = "quic"
+	NaiveBoth = "both"
+)
+
+// TCP and QUIC tell which networks NaïveProxy serves.
+func (n Naive) TCP() bool  { return n.Network != NaiveQUIC }
+func (n Naive) QUIC() bool { return n.Network != NaiveTCP }
 
 // Mieru is the Mieru protocol. Official sing-box has none, so mbox, the
 // sing-box build of Mieru's author, serves it in a container of its own.
@@ -103,6 +120,7 @@ var (
 	UDPRelayModes      = []string{"native", "quic"}
 	BBRProfiles        = []string{"standard", "conservative", "aggressive"}
 	MieruTransports    = []string{"TCP", "UDP"}
+	NaiveNetworks      = []string{NaiveTCP, NaiveQUIC, NaiveBoth}
 )
 
 // maxMieruPorts caps the range: each port is an inbound of its own.
@@ -116,7 +134,7 @@ func hy2Defaults() Hysteria2 {
 }
 
 // naiveDefaults is NaïveProxy on TCP 2443.
-func naiveDefaults() Naive { return Naive{Enabled: true, Port: 2443} }
+func naiveDefaults() Naive { return Naive{Enabled: true, Port: 2443, Network: NaiveTCP} }
 
 // mieruDefaults is Mieru on TCP 2012-2022, the range of Mieru's own example.
 func mieruDefaults() Mieru {
@@ -174,6 +192,11 @@ func (s *Settings) Normalize() {
 	h.BBRProfile = strings.ToLower(strings.TrimSpace(h.BBRProfile))
 	h.ObfsPassword = strings.TrimSpace(h.ObfsPassword)
 	s.Mieru.Transport = strings.ToUpper(strings.TrimSpace(s.Mieru.Transport))
+	s.Naive.Network = strings.ToLower(strings.TrimSpace(s.Naive.Network))
+	if s.Naive.Network == "" {
+		// Stored before NaïveProxy got QUIC.
+		s.Naive.Network = NaiveTCP
+	}
 	if h.ObfsPassword == "" && s.Secret != "" {
 		h.ObfsPassword = s.derive("salamander")
 	}
@@ -219,8 +242,20 @@ func (s *Settings) Validate() error {
 	if h.IgnoreClientBandwidth && h.UpMbps > 0 {
 		return errors.New("Hysteria 2: «Всегда BBR» и скорость сервера вместе не работают, оставьте что-то одно")
 	}
-	if n := s.Naive.Port; n < 1024 || n > 65535 {
-		return fmt.Errorf("NaïveProxy: порт %d. Можно от 1024 до 65535: 443 по TCP занят сайтом и Xray", n)
+	n := s.Naive
+	if n.Port < 1024 || n.Port > 65535 {
+		return fmt.Errorf("NaïveProxy: порт %d. Можно от 1024 до 65535: 443 по TCP занят сайтом и Xray", n.Port)
+	}
+	if !slices.Contains(NaiveNetworks, n.Network) {
+		return fmt.Errorf("NaïveProxy: режим %q, можно tcp, quic или both", n.Network)
+	}
+	if n.Enabled && n.QUIC() {
+		if t.Enabled && t.Port == n.Port {
+			return fmt.Errorf("NaïveProxy по QUIC и TUIC оба работают по UDP, им нужны разные порты, а не %d", n.Port)
+		}
+		if h.Enabled && h.Port == n.Port {
+			return fmt.Errorf("NaïveProxy по QUIC и Hysteria 2 оба работают по UDP, им нужны разные порты, а не %d", n.Port)
+		}
 	}
 	m := s.Mieru
 	if m.PortFrom < 1024 || m.PortTo > 65535 || m.PortFrom > m.PortTo {
@@ -239,9 +274,12 @@ func (s *Settings) Validate() error {
 		if h.Enabled && s.MieruHas(h.Port) {
 			return fmt.Errorf("Mieru по UDP и Hysteria 2: порт %d в обоих, им нужны разные порты", h.Port)
 		}
+		if n.Enabled && n.QUIC() && s.MieruHas(n.Port) {
+			return fmt.Errorf("Mieru и NaïveProxy оба работают по UDP: порт %d в обоих, им нужны разные порты", n.Port)
+		}
 	}
-	if m.Enabled && m.Transport == "TCP" && s.Naive.Enabled && s.MieruHas(s.Naive.Port) {
-		return fmt.Errorf("Mieru и NaïveProxy оба работают по TCP: порт %d в обоих, им нужны разные порты", s.Naive.Port)
+	if m.Enabled && m.Transport == "TCP" && n.Enabled && n.TCP() && s.MieruHas(n.Port) {
+		return fmt.Errorf("Mieru и NaïveProxy оба работают по TCP: порт %d в обоих, им нужны разные порты", n.Port)
 	}
 	if len(s.Secret) < 32 {
 		return errors.New("sing-box: нет секрета для паролей")

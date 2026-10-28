@@ -37,7 +37,7 @@ func newWorld(t *testing.T) *world {
 		"tigersb.service": "active", "tigersb-caddy.service": "active",
 		"tigersb-edge.service": "active", "tigersb-xray.service": "active",
 		"tigersb-sub.service": "active", "tigersb-singbox.service": "active", "tigersb-mieru.service": "active",
-	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true, 10086: true, 2443: true, 2012: true},
+	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true, 10086: true, 2443: true, 10443: true, 2012: true},
 		udp: map[int]bool{8443: true, 443: true}, cert: true}
 	caddy := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if w.routed && strings.HasPrefix(r.URL.Path, "/"+secret+"/") {
@@ -276,4 +276,55 @@ func TestMieru(t *testing.T) {
 	check(Off, "off")
 	w.units["tigersb-mieru.service"] = "failed"
 	check(Fail, "container down")
+}
+
+func TestProtocols(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	check := func(want map[string]string, why string) {
+		t.Helper()
+		list, err := Protocols(ctx, w.env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		var ids []string
+		for _, r := range list {
+			got[r.ID] = r.State
+			ids = append(ids, r.ID)
+		}
+		if strings.Join(ids, ",") != "xhttp,grpc,tuic,hysteria2,naive,mieru" {
+			t.Fatalf("order: %v", ids)
+		}
+		for id, state := range want {
+			if got[id] != state {
+				t.Errorf("%s: %s is %s, want %s", why, id, got[id], state)
+			}
+		}
+	}
+	all := func(state string) map[string]string {
+		return map[string]string{"xhttp": state, "grpc": state, "tuic": state, "hysteria2": state, "naive": state, "mieru": state}
+	}
+	check(all(OK), "healthy")
+
+	w.ports[10443] = false
+	check(map[string]string{"naive": Fail, "tuic": OK}, "NaïveProxy not behind the edge")
+	w.ports[10443] = true
+	s, _ := singbox.Load(ctx, w.env.Store)
+	s.Naive.Network = singbox.NaiveBoth
+	singbox.Save(ctx, w.env.Store, s)
+	check(map[string]string{"naive": Fail}, "QUIC not listening")
+	w.udp[2443] = true
+	check(map[string]string{"naive": OK}, "TCP and QUIC")
+
+	w.cert = false
+	check(map[string]string{"tuic": Warn, "hysteria2": Warn, "naive": Warn, "mieru": OK, "xhttp": OK}, "no certificate")
+	w.cert = true
+	w.units["tigersb-singbox.service"] = "failed"
+	check(map[string]string{"tuic": Fail, "naive": Fail, "mieru": OK}, "sing-box down")
+	w.units["tigersb-xray.service"] = "failed"
+	check(map[string]string{"xhttp": Fail, "grpc": Fail}, "Xray down")
+	s.Mieru.Enabled = false
+	singbox.Save(ctx, w.env.Store, s)
+	check(map[string]string{"mieru": Off}, "Mieru off")
 }

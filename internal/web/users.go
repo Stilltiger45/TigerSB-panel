@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
 	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
@@ -61,9 +62,11 @@ type usersResponse struct {
 	Address string     `json:"address"`
 	Domain  string     `json:"domain"`
 	Xray    string     `json:"xray"`
-	Sub     string     `json:"sub"`  // state of tigersb-sub
-	Live    bool       `json:"live"` // traffic and online come from the running Xray
-	Warning string     `json:"warning,omitempty"`
+	Sub     string     `json:"sub"` // state of tigersb-sub
+	// Protocols is the state of each protocol now (health.Protocols).
+	Protocols []health.Result `json:"protocols"`
+	Live      bool            `json:"live"` // traffic and online come from the running Xray
+	Warning   string          `json:"warning,omitempty"`
 }
 
 func newUUID() (string, error) {
@@ -141,6 +144,9 @@ func (s *Server) usersState(ctx context.Context) (*usersResponse, error) {
 	resp := &usersResponse{
 		Users: []userView{}, Address: s.address(ctx, set), Domain: domain,
 		Xray: s.xrayState(), Sub: service.UnitState(s.Run, sub.Unit),
+	}
+	if resp.Protocols, err = health.Protocols(ctx, s.healthEnv()); err != nil {
+		return nil, err
 	}
 	live := map[int64]xray.UserStats{}
 	if resp.Xray == "active" {

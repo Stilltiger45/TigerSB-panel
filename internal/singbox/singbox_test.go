@@ -20,6 +20,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-client/pkg/profile"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
+	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
 
 func users() []store.User {
@@ -414,28 +415,76 @@ func TestRenderTestLink(t *testing.T) {
 
 func TestRenderNaive(t *testing.T) {
 	s := defaults(t)
-	raw, err := Render(s, users(), "vpn.example.com", true)
-	if err != nil {
-		t.Fatal(err)
+	type inbound struct {
+		Type, Network, Listen string
+		Tag                   string
+		ListenPort            int `json:"listen_port"`
+		Users                 []struct{ Username, Password string }
+		TLS                   struct{ ALPN []string }
+		CC                    string `json:"quic_congestion_control"`
 	}
-	var conf struct {
-		Inbounds []struct {
-			Type, Network string
-			ListenPort    int `json:"listen_port"`
-			Users         []struct{ Username, Password string }
-			TLS           struct{ ALPN []string }
+	render := func() []inbound {
+		t.Helper()
+		raw, err := Render(s, users(), "vpn.example.com", true)
+		if err != nil {
+			t.Fatal(err)
 		}
+		var conf struct{ Inbounds []inbound }
+		if err := json.Unmarshal(raw, &conf); err != nil {
+			t.Fatal(err)
+		}
+		return conf.Inbounds[2:]
 	}
-	if err := json.Unmarshal(raw, &conf); err != nil {
-		t.Fatal(err)
+	// TCP listens behind the edge, which holds the public port.
+	in := render()
+	if len(in) != 1 || in[0].Type != "naive" || in[0].Network != "tcp" || in[0].Listen != "127.0.0.1" ||
+		in[0].ListenPort != xray.NaiveInner || fmt.Sprint(in[0].TLS.ALPN) != "[h2 http/1.1]" {
+		t.Fatalf("inbound: %+v", in)
 	}
-	in := conf.Inbounds[2]
-	if in.Type != "naive" || in.Network != "tcp" || in.ListenPort != 2443 || fmt.Sprint(in.TLS.ALPN) != "[h2 http/1.1]" {
-		t.Fatalf("inbound: %s", raw)
+	if len(in[0].Users) != 1 || in[0].Users[0].Username != "u1" || in[0].Users[0].Password != s.NaivePassword(users()[0].UUID) {
+		t.Fatalf("users: %+v", in[0].Users)
 	}
-	if len(in.Users) != 1 || in.Users[0].Username != "u1" || in.Users[0].Password != s.NaivePassword(users()[0].UUID) {
-		t.Fatalf("users: %+v", in.Users)
+	f := Forwards(s, "vpn.example.com", true)
+	if len(f) != 1 || f[0].Listen != ":2443" || f[0].Addr != "127.0.0.1:10443" || f[0].Congestion != "" || f[0].Proxy {
+		t.Fatalf("forwards: %+v", f)
 	}
+	if Forwards(s, "", false) != nil {
+		t.Fatal("no forward without the certificate")
+	}
+
+	// Both: QUIC listens on the public UDP port itself, BBR goes to both.
+	s.Naive.Network, s.Naive.BBR = NaiveBoth, true
+	in = render()
+	if len(in) != 2 || in[1].Network != "udp" || in[1].Listen != "::" || in[1].ListenPort != 2443 ||
+		in[1].Tag != "naive-quic" || in[1].CC != "bbr" || fmt.Sprint(in[1].TLS.ALPN) != "[h3]" || len(in[1].Users) != 1 {
+		t.Fatalf("inbounds: %+v", in)
+	}
+	if f := Forwards(s, "vpn.example.com", true); len(f) != 1 || f[0].Congestion != "bbr" {
+		t.Fatalf("forwards: %+v", f)
+	}
+	links := NaiveLinks(s, "203.0.113.5", "vpn.example.com", true, users()[0])
+	if len(links) != 2 || !strings.HasPrefix(links[0].URL, "naive+https://u1:") || !strings.HasPrefix(links[1].URL, "naive+quic://u1:") ||
+		!strings.Contains(links[1].URL, "@203.0.113.5:2443?sni=vpn.example.com&padding=true#") || !IsNaiveQUIC(links[1]) || IsNaiveQUIC(links[0]) {
+		t.Fatalf("links: %+v", links)
+	}
+
+	// QUIC only: no TCP, nothing for the edge, CUBIC without BBR.
+	s.Naive.Network, s.Naive.BBR = NaiveQUIC, false
+	if in = render(); len(in) != 1 || in[0].Network != "udp" || in[0].CC != "cubic" {
+		t.Fatalf("inbounds: %+v", in)
+	}
+	if Forwards(s, "vpn.example.com", true) != nil {
+		t.Fatal("QUIC needs no forward")
+	}
+	s.Naive.Port = s.TUIC.Port
+	if err := s.Validate(); err == nil {
+		t.Fatal("NaïveProxy QUIC on the TUIC port must be refused")
+	}
+	s.Naive.Port, s.Naive.Network = 2443, "http3"
+	if err := s.Validate(); err == nil {
+		t.Fatal("unknown network must be refused")
+	}
+	s.Naive.Network = NaiveTCP
 	s.Naive.Port = 443
 	if err := s.Validate(); err == nil {
 		t.Fatal("NaïveProxy on TCP 443 must be refused")

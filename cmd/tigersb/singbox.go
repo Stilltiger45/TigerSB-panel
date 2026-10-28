@@ -125,13 +125,25 @@ func cmdSingbox(cmd string, args []string) error {
 		default:
 			fmt.Printf("Hysteria 2: порт %d/udp, SNI %s, %s\n", h.Port, e.set.Domain, obfs)
 		}
-		switch n := s.Naive; {
+		n := s.Naive
+		var nets []string
+		if n.TCP() {
+			nets = append(nets, fmt.Sprintf("%d/tcp через tigersb-edge", n.Port))
+		}
+		if n.QUIC() {
+			nets = append(nets, fmt.Sprintf("%d/udp (QUIC)", n.Port))
+		}
+		bbr := "без BBR"
+		if n.BBR {
+			bbr = "BBR"
+		}
+		switch {
 		case !n.Enabled:
 			fmt.Println("NaïveProxy: выключен")
 		case !singbox.ServingNaive(s, e.set.Domain, rt.HaveCert()):
-			fmt.Printf("NaïveProxy: порт %d/tcp, ждёт домен и сертификат\n", n.Port)
+			fmt.Printf("NaïveProxy: порт %s, ждёт домен и сертификат\n", strings.Join(nets, ", "))
 		default:
-			fmt.Printf("NaïveProxy: порт %d/tcp, SNI %s\n", n.Port, e.set.Domain)
+			fmt.Printf("NaïveProxy: порт %s, SNI %s, %s\n", strings.Join(nets, ", "), e.set.Domain, bbr)
 		}
 		return nil
 	}

@@ -52,6 +52,10 @@ func Write(path string, r Routes) error {
 	if err != nil {
 		return err
 	}
+	return writeAtomic(path, b)
+}
+
+func writeAtomic(path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -83,17 +87,25 @@ const (
 type Server struct {
 	// Path is the routes file, re-read when it changes.
 	Path string
+	// Forwards is the file of other ports the edge holds (Forward); empty
+	// for none.
+	Forwards string
 
 	mu     sync.RWMutex
 	routes Routes
 	mtime  time.Time
 
 	ccWarned sync.Once
+
+	fwMu     sync.Mutex
+	open     map[string]*forwarder
+	fwWarned sync.Once
 }
 
-// Reload re-reads the routes file when it changed. A broken file keeps the
-// previous routes.
+// Reload re-reads the routes file when it changed and brings the forwarded
+// ports in line with their file. A broken file keeps the previous routes.
 func (s *Server) Reload() {
+	s.forwards()
 	st, err := os.Stat(s.Path)
 	if err != nil {
 		return
@@ -168,6 +180,13 @@ func (s *Server) handle(c net.Conn) {
 	if b == nil {
 		return
 	}
+	s.pass(c, *b, hello)
+}
+
+// pass hands the connection to the backend, with what was already read
+// from it.
+func (s *Server) pass(c net.Conn, b Backend, read []byte) {
+	defer c.Close()
 	if b.Congestion != "" {
 		if err := setCongestion(c, b.Congestion); err != nil {
 			s.ccWarned.Do(func() {
@@ -186,8 +205,10 @@ func (s *Server) handle(c net.Conn) {
 			return
 		}
 	}
-	if _, err := up.Write(hello); err != nil {
-		return
+	if len(read) > 0 {
+		if _, err := up.Write(read); err != nil {
+			return
+		}
 	}
 	pipe(c, up)
 }

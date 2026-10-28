@@ -126,3 +126,50 @@ func TestProxyHeader(t *testing.T) {
 		t.Errorf("%q", mapped)
 	}
 }
+
+func TestForwards(t *testing.T) {
+	to, got := backend(t)
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := free.Addr().String()
+	free.Close()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ports.json")
+	srv := &Server{Path: filepath.Join(dir, "routes.json"), Forwards: path}
+	defer srv.CloseForwards()
+	// No file yet: nothing is opened.
+	srv.Reload()
+	if _, err := net.Dial("tcp", addr); err == nil {
+		t.Fatal("port open without forwards")
+	}
+	if err := WriteForwards(path, []Forward{{Listen: addr, Backend: Backend{Addr: to}}}); err != nil {
+		t.Fatal(err)
+	}
+	srv.Reload()
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bytes go through as they are, without a PROXY header and without
+	// waiting for a TLS hello.
+	c.Write([]byte("xxxxxx"))
+	select {
+	case v := <-got:
+		if v[0] != "" || v[1] != "x" {
+			t.Fatalf("backend got %q", v)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("nothing reached the backend")
+	}
+	c.Close()
+	if err := WriteForwards(path, nil); err != nil {
+		t.Fatal(err)
+	}
+	srv.Reload()
+	if c, err := net.Dial("tcp", addr); err == nil {
+		c.Close()
+		t.Fatal("port still open after its forward was removed")
+	}
+}

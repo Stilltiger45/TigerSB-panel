@@ -143,6 +143,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleUpdate(w, r)
 	case rest == "/api/control/restore":
 		s.handleRestore(w, r)
+	case rest == "/api/overview":
+		s.handleOverview(w, r)
 	case rest == "/api/users":
 		s.handleUsers(w, r)
 	case rest == "/api/users/add":

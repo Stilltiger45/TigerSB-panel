@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-client/pkg/profile"
 
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 )
 
@@ -244,5 +245,21 @@ func TestSingboxInSubscriptions(t *testing.T) {
 	}
 	if nv := string(tr[4].Xray); tr[4].ID != "naive" || tr[4].Prio != 50 || !strings.Contains(nv, `"port":2443`) || !strings.Contains(nv, `"padding":true`) {
 		t.Fatalf("naive: %s", nv)
+	}
+
+	// NaïveProxy on TCP and QUIC: other clients get both links, the app,
+	// which has no QUIC for it yet, the TCP one only.
+	sb, _ := singbox.Load(context.Background(), st)
+	sb.Naive.Network = singbox.NaiveBoth
+	singbox.Save(context.Background(), st, sb)
+	w = get(h, http.MethodGet, "/sub/"+u.SubToken, "Hiddify/2.0", "hw1")
+	raw, _ = base64.StdEncoding.DecodeString(w.Body.String())
+	lines = strings.Split(string(raw), "\n")
+	if len(lines) != 7 || !strings.HasPrefix(lines[4], "naive+https://") || !strings.HasPrefix(lines[5], "naive+quic://") {
+		t.Fatalf("links: %q", lines)
+	}
+	w = get(h, http.MethodGet, "/sub/"+u.SubToken, "TigerSB-android/0.1", "hw1")
+	if p, _, err = profile.Open(w.Body.Bytes(), pinned); err != nil || len(p.Exits[0].Transports) != 6 {
+		t.Fatalf("%v: %+v", err, p)
 	}
 }

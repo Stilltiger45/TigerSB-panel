@@ -15,6 +15,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-client/pkg/profile"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/edge"
+	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
@@ -493,5 +494,36 @@ func TestTCPClash(t *testing.T) {
 	sb.Mieru.Transport = "UDP"
 	if err := tcpClash(set, sb, 2015); err != nil {
 		t.Fatalf("Mieru over UDP leaves TCP alone: %v", err)
+	}
+}
+
+func TestOverview(t *testing.T) {
+	s, f, c := vpnServer(t)
+	s.HealthBase = health.Env{Listening: func(int) bool { return true }, ListeningUDP: func(int) bool { return true }, TUICCert: func() bool { return true }}
+	if w := do(s, http.MethodPost, "/"+secret+"/api/users/add", `{"name":"Мама","devices":1}`, c); w.Code != http.StatusOK {
+		t.Fatalf("add: %d %s", w.Code, w.Body)
+	}
+	do(s, http.MethodPost, "/"+secret+"/api/users/add", `{"name":"Папа","devices":1}`, c)
+	f.online = `{"users":[{"email":"u1","ips":[{"ip":"198.51.100.1"},{"ip":"198.51.100.2"}]}]}`
+	w := do(s, http.MethodGet, "/"+secret+"/api/overview", "", c)
+	var r overviewResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &r); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("%d %v: %s", w.Code, err, w.Body)
+	}
+	if u := r.Users; u.Total != 2 || u.Enabled != 2 || u.Online != 1 || u.Over != 1 || !u.Live {
+		t.Fatalf("users: %+v", u)
+	}
+	if len(r.Protocols) != 6 || r.Protocols[0].ID != "xhttp" || r.Protocols[0].State != health.OK {
+		t.Fatalf("protocols: %+v", r.Protocols)
+	}
+	if len(r.Cores) != 3 || r.Edge != "active" || r.Sub != "active" {
+		t.Fatalf("services: %+v %s %s", r.Cores, r.Edge, r.Sub)
+	}
+	// The Users tab shows the same protocols.
+	if u := decodeUsers(t, do(s, http.MethodGet, "/"+secret+"/api/users", "", c).Body.Bytes()); len(u.Protocols) != 6 {
+		t.Fatalf("users protocols: %+v", u.Protocols)
+	}
+	if w := do(s, http.MethodGet, "/"+secret+"/api/overview", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("without login: %d", w.Code)
 	}
 }

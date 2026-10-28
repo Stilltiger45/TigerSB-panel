@@ -1,5 +1,5 @@
 [Unit]
-Description=TigerSB edge (port 443 shared by SNI between the site and Xray)
+Description=TigerSB edge (port 443 shared by SNI between the site and Xray, plus the NaïveProxy TCP port)
 Documentation=https://github.com/Stilltiger45/TigerSB-panel
 After=network-online.target
 Wants=network-online.target

@@ -40,6 +40,9 @@ const (
 	XHTTPInner = 10442
 	TLSPort    = site.InnerTLSPort
 	EdgePort   = 443
+	// NaiveInner is NaïveProxy over TCP in sing-box: the edge holds its
+	// public port and sets BBR there (singbox.Forwards).
+	NaiveInner = 10443
 )
 
 // Protocol IDs, also the inbound tags.
@@ -304,6 +307,7 @@ func Reserved(panelPort int) map[int]string {
 		site.SubPort: "подписки",
 		GRPCInner:    "внутренний порт gRPC",
 		XHTTPInner:   "внутренний порт XHTTP",
+		NaiveInner:   "внутренний порт NaïveProxy",
 		panelPort:    "панель",
 	}
 }

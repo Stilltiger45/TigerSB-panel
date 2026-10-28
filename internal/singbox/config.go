@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/core"
+	"github.com/Stilltiger45/TigerSB-panel/internal/edge"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
@@ -90,7 +91,7 @@ func Render(s Settings, users []store.User, domain string, haveCert bool) ([]byt
 		inbounds = append(inbounds, hy2Inbound(s, users, domain))
 	}
 	if ServingNaive(s, domain, haveCert) {
-		inbounds = append(inbounds, naiveInbound(s, users, domain))
+		inbounds = append(inbounds, naiveInbounds(s, users, domain)...)
 	}
 	return marshal(inbounds)
 }
@@ -167,23 +168,55 @@ func hy2Inbound(s Settings, users []store.User, domain string) obj {
 	return in
 }
 
-// naiveInbound is the NaïveProxy inbound: HTTP/2 over TCP, as Chrome
-// speaks it. sing-box answers anything but a CONNECT with padding and the
-// right password with an error page, so the port does not proxy for
-// strangers.
-func naiveInbound(s Settings, users []store.User, domain string) obj {
+// naiveInbounds are the NaïveProxy inbounds: HTTP/2 over TCP, as Chrome
+// speaks it, and HTTP/3 over QUIC. sing-box closes anything but a CONNECT
+// with padding and the right password, so the port does not proxy for
+// strangers. The TCP one listens on loopback behind the edge, which holds
+// the public port and sets BBR there (Forwards): sing-box has no option
+// for the TCP congestion control.
+func naiveInbounds(s Settings, users []store.User, domain string) []obj {
+	n := s.Naive
 	list := []obj{}
 	for _, u := range users {
 		if xray.Serves(u, NaiveTag) {
 			list = append(list, obj{"username": xray.Name(u), "password": s.NaivePassword(u.UUID)})
 		}
 	}
-	return obj{
-		"type": "naive", "tag": NaiveTag, "listen": "::", "listen_port": s.Naive.Port,
-		"network": "tcp",
-		"users":   list,
-		"tls":     tlsConf(domain, "h2", "http/1.1"),
+	var out []obj
+	if n.TCP() {
+		out = append(out, obj{
+			"type": "naive", "tag": NaiveTag, "listen": "127.0.0.1", "listen_port": xray.NaiveInner,
+			"network": "tcp",
+			"users":   list,
+			"tls":     tlsConf(domain, "h2", "http/1.1"),
+		})
 	}
+	if n.QUIC() {
+		cc := "cubic"
+		if n.BBR {
+			cc = "bbr"
+		}
+		out = append(out, obj{
+			"type": "naive", "tag": NaiveTag + "-quic", "listen": "::", "listen_port": n.Port,
+			"network":                 "udp",
+			"users":                   list,
+			"quic_congestion_control": cc,
+			"tls":                     tlsConf(domain, "h3"),
+		})
+	}
+	return out
+}
+
+// Forwards are the ports the edge holds for sing-box: NaïveProxy over TCP
+// while it is served.
+func Forwards(s Settings, domain string, haveCert bool) []edge.Forward {
+	if !ServingNaive(s, domain, haveCert) || !s.Naive.TCP() {
+		return nil
+	}
+	return []edge.Forward{{
+		Listen:  ":" + strconv.Itoa(s.Naive.Port),
+		Backend: edge.Backend{Addr: "127.0.0.1:" + strconv.Itoa(xray.NaiveInner), Congestion: xray.Congestion(s.Naive.BBR)},
+	}}
 }
 
 // Links returns the tuic:// link of a user when TUIC is served. The address
@@ -233,9 +266,10 @@ func Hy2Links(s Settings, address, domain string, haveCert bool, u store.User) [
 	return []core.Link{{Protocol: Hy2Tag, Title: title, URL: link}}
 }
 
-// NaiveLinks returns the naive+https:// link of a user when NaïveProxy is
-// served, in the form NekoBox, v2rayN and Hiddify read: the user name is the
-// one inside sing-box, padding is on.
+// NaiveLinks returns the NaïveProxy links of a user when it is served, in
+// the form NekoBox, v2rayN and Hiddify read: naive+https:// for TCP and
+// naive+quic:// for QUIC. The user name is the one inside sing-box, padding
+// is on.
 func NaiveLinks(s Settings, address, domain string, haveCert bool, u store.User) []core.Link {
 	if !ServingNaive(s, domain, haveCert) {
 		return nil
@@ -244,12 +278,24 @@ func NaiveLinks(s Settings, address, domain string, haveCert bool, u store.User)
 	if strings.Contains(host, ":") {
 		host = "[" + host + "]"
 	}
-	title := u.Name + " · NaïveProxy"
-	link := "naive+https://" + url.QueryEscape(xray.Name(u)) + ":" + url.QueryEscape(s.NaivePassword(u.UUID)) +
-		"@" + host + ":" + strconv.Itoa(s.Naive.Port) +
-		"?sni=" + url.QueryEscape(domain) + "&padding=true#" + url.PathEscape(title)
-	return []core.Link{{Protocol: NaiveTag, Title: title, URL: link}}
+	link := func(scheme, title string) core.Link {
+		return core.Link{Protocol: NaiveTag, Title: title, URL: scheme + "://" + url.QueryEscape(xray.Name(u)) + ":" + url.QueryEscape(s.NaivePassword(u.UUID)) +
+			"@" + host + ":" + strconv.Itoa(s.Naive.Port) +
+			"?sni=" + url.QueryEscape(domain) + "&padding=true#" + url.PathEscape(title)}
+	}
+	var out []core.Link
+	if s.Naive.TCP() {
+		out = append(out, link("naive+https", u.Name+" · NaïveProxy"))
+	}
+	if s.Naive.QUIC() {
+		out = append(out, link("naive+quic", u.Name+" · NaïveProxy QUIC"))
+	}
+	return out
 }
+
+// IsNaiveQUIC tells a naive+quic:// link, which the TigerSB app cannot use
+// yet.
+func IsNaiveQUIC(l core.Link) bool { return strings.HasPrefix(l.URL, "naive+quic://") }
 
 // MieruLinks returns the mierus:// link of a user when Mieru is on, in the
 // form "mieru export config simple" writes. The address may be an IP: Mieru

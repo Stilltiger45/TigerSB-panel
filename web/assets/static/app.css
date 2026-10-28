@@ -363,3 +363,8 @@ table.scan .row { flex-wrap: nowrap; }
 .port-row .label { font-size: 0.9rem; color: var(--muted); }
 /* Four protocol cards sit two by two. */
 #pr-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }
+.proto-pills { margin-top: 12px; gap: 6px; }
+.meters.compact { grid-template-columns: 1fr; gap: 10px; margin: 10px 0 0; }
+.meters.compact .meter { grid-template-columns: 1fr auto; align-items: baseline; gap: 6px 12px; padding: 10px 14px; }
+.meters.compact .meter b { font-size: 1.1rem; }
+.meters.compact .bar, .meters.compact .faint { grid-column: 1 / -1; }
