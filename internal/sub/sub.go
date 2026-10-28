@@ -125,15 +125,16 @@ var prio = map[string]int{xray.XHTTPTag: 10, xray.GRPCTag: 20, singbox.TUICTag: 
 func Profile(priv ed25519.PrivateKey, links []core.Link, domain string, u store.User, now time.Time) ([]byte, error) {
 	exit := profile.Exit{ID: "main", Role: profile.RoleForeign}
 	for _, l := range links {
-		if singbox.IsNaiveQUIC(l) {
-			// The app speaks NaïveProxy over TCP only; it gets that link.
-			continue
-		}
 		out, _, err := profile.ParseLink(l.URL)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", l.Protocol, err)
 		}
-		exit.Transports = append(exit.Transports, profile.Transport{ID: l.Protocol, Prio: prio[l.Protocol], Name: l.Title, Xray: out})
+		id, p := l.Protocol, prio[l.Protocol]
+		if singbox.IsNaiveQUIC(l) {
+			// NaïveProxy on TCP and QUIC are two transports of the exit.
+			id, p = singbox.NaiveTag+"-quic", p+5
+		}
+		exit.Transports = append(exit.Transports, profile.Transport{ID: id, Prio: p, Name: l.Title, Xray: out})
 	}
 	if len(exit.Transports) == 0 {
 		return nil, errors.New("нет включённых протоколов")

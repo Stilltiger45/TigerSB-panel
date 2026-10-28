@@ -3,7 +3,7 @@ module github.com/Stilltiger45/TigerSB-panel
 go 1.26.0
 
 require (
-	github.com/Stilltiger45/TigerSB-client v0.0.0-20261028081823-1a1d0355ba7b
+	github.com/Stilltiger45/TigerSB-client v0.0.0-20261028182956-688bf7767f28
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
