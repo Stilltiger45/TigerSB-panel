@@ -430,3 +430,47 @@ func TestCoreRestart(t *testing.T) {
 		t.Error("restart without login")
 	}
 }
+
+func TestTestLinks(t *testing.T) {
+	s, f, c := vpnServer(t)
+	if w := do(s, http.MethodPost, "/"+secret+"/api/users/add", `{"name":"Мама","devices":1}`, c); w.Code != http.StatusOK {
+		t.Fatalf("add: %d %s", w.Code, w.Body)
+	}
+	test := func(body string) protocolsResponse {
+		t.Helper()
+		w := do(s, http.MethodPost, "/"+secret+"/api/protocols/test", body, c)
+		var p protocolsResponse
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &p) != nil {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
+		}
+		return p
+	}
+	p := test(`{"protocol":"grpc"}`)
+	first := p.Tests["grpc"]
+	if !strings.HasPrefix(first, "vless://") || len(p.Tests) != 1 {
+		t.Fatalf("tests: %v", p.Tests)
+	}
+	if !strings.Contains(f.joined(), " adu ") || !strings.Contains(f.stdin[len(f.stdin)-1], `"test-grpc"`) || strings.Contains(f.stdin[len(f.stdin)-1], `"xhttp"`) {
+		t.Fatalf("live add: %v", f.stdin)
+	}
+	conf, _ := os.ReadFile(s.Xray.ConfigPath())
+	if strings.Count(string(conf), `"test-grpc"`) != 1 {
+		t.Fatalf("config: %s", conf)
+	}
+	if u := decodeUsers(t, do(s, http.MethodGet, "/"+secret+"/api/users", "", c).Body.Bytes()); len(u.Users) != 1 {
+		t.Fatalf("a test link shows up among the users: %+v", u.Users)
+	}
+	if again := test(`{"protocol":"grpc"}`).Tests["grpc"]; again == first || !strings.Contains(f.joined(), "-tag=grpc test-grpc") {
+		t.Fatalf("new link: %q, calls %s", again, f.joined())
+	}
+	// TUIC has no certificate here: the link is kept and shows up once it works.
+	if p := test(`{"protocol":"tuic"}`); p.Tests["tuic"] != "" || len(p.Tests) != 2 {
+		t.Fatalf("tuic: %v", p.Tests)
+	}
+	if p := test(`{"protocol":"grpc","delete":true}`); len(p.Tests) != 1 {
+		t.Fatalf("delete: %v", p.Tests)
+	}
+	if w := do(s, http.MethodPost, "/"+secret+"/api/protocols/test", `{"protocol":"ssh"}`, c); w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown protocol: %d", w.Code)
+	}
+}

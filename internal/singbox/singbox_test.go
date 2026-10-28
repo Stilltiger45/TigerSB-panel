@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -383,5 +384,30 @@ func TestSyncCopiesCertAndReloads(t *testing.T) {
 	// The domain is gone: the copies go too, and TUIC with them.
 	if err := rt.Sync(ctx, st, "", true); err != nil || rt.HaveCert() || len(calls) != 3 {
 		t.Fatalf("calls %v %v", calls, err)
+	}
+}
+
+// A test link works on its own protocol only.
+func TestRenderTestLink(t *testing.T) {
+	s := defaults(t)
+	us := append(users(), store.User{UUID: "33333333-3333-4333-8333-333333333333", Enabled: true, Only: TUICTag})
+	raw, err := Render(s, us, "vpn.example.com", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conf struct {
+		Inbounds []struct {
+			Tag   string
+			Users []struct{ Name string }
+		}
+	}
+	if err := json.Unmarshal(raw, &conf); err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range conf.Inbounds {
+		has := strings.Contains(fmt.Sprint(in.Users), "test-tuic")
+		if has != (in.Tag == TUICTag) {
+			t.Fatalf("%s: %v", in.Tag, in.Users)
+		}
 	}
 }

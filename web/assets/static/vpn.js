@@ -473,13 +473,69 @@ function card(proto, title, core, p, portRow, more) {
   const details = el("details", { class: "more" }, el("summary", { text: "Все настройки" }), ...more);
   details.open = unfolded.has(proto);
   details.addEventListener("toggle", () => (details.open ? unfolded.add(proto) : unfolded.delete(proto)));
-  const body = el("div", { class: "proto-body" }, portRow, details);
+  const body = el("div", { class: "proto-body" }, portRow, testBlock(proto, core), details);
   body.hidden = !p.enabled;
   return el("div", { class: "glass proto", id: "proto-" + proto },
     el("div", { class: "head-row" },
       el("h2", {}, title, el("span", { class: "tag core", text: core })),
       el("label", { class: "check" }, enabled, "включён")),
     body);
+}
+
+// testBlock is the protocol's own test link. It works on this protocol only,
+// so each one can be checked for stability apart from the others. A new link
+// replaces the old one; the action answers with fresh links only, so unsaved
+// changes in the form stay.
+function testBlock(proto, core) {
+  const box = el("div", { class: "links test-link" });
+  const draw = () => {
+    const link = (protoData.tests || {})[proto];
+    const act = async (del, btn) => {
+      if (link !== undefined && !confirm(del ? "Удалить тестовую ссылку? Она перестанет работать." : "Старая тестовая ссылка перестанет работать. Создать новую?")) return;
+      btn.disabled = true;
+      try {
+        const d = await api("api/protocols/test", { protocol: proto, delete: del });
+        protoData.tests = d.tests;
+        draw();
+        notice("pr-msg", d.warning || "", !!d.warning);
+      } catch (err) {
+        notice("pr-msg", err.message, true);
+        btn.disabled = false;
+      }
+    };
+    const make = el("button", { type: "button", class: "ghost small", text: link === undefined ? "Создать" : "Новая", onclick: (e) => act(false, e.target) });
+    const rows = [];
+    if (link) {
+      const qr = el("img", { class: "qr", alt: "QR-код тестовой ссылки", hidden: true });
+      rows.push(el("code", { class: "mono link-text", text: link }),
+        el("div", { class: "row" },
+          el("button", { type: "button", class: "ghost small", text: "Копировать", onclick: (e) => copy(link, e.target) }),
+          el("button", {
+            type: "button", class: "ghost small", text: "QR",
+            onclick: () => {
+              if (!qr.src) qr.src = `api/protocols/test/qr?protocol=${proto}&k=${encodeURIComponent(link)}`;
+              qr.hidden = !qr.hidden;
+            },
+          }),
+          make,
+          el("button", { type: "button", class: "ghost small", text: "Удалить", onclick: (e) => act(true, e.target) })),
+        qr);
+    } else if (link === "") {
+      rows.push(el("small", { class: "hint warn", text: "Протокол сейчас не работает: ссылка заработает, когда он будет включён и сохранён." }),
+        el("div", { class: "row" }, make, el("button", { type: "button", class: "ghost small", text: "Удалить", onclick: (e) => act(true, e.target) })));
+    }
+    const hint = link === undefined
+      ? "Отдельная ссылка только на этот протокол, чтобы проверить его стабильность отдельно от остальных. В подписки не попадает, трафик не считается."
+      : "Работает только на этом протоколе. Пользователям не видна.";
+    const reload = core === "sing-box" ? " Создание и удаление перечитывает настройки sing-box: TUIC и Hysteria 2 у всех прервутся на несколько секунд." : "";
+    box.replaceChildren(
+      el("div", { class: "link-row" },
+        el("div", { class: "link-head" }, el("b", { text: "Тестовая ссылка" }), link === undefined ? make : ""),
+        ...rows,
+        el("small", { class: "faint", text: hint + reload })));
+  };
+  draw();
+  return box;
 }
 
 function portInput(p, hintText) {

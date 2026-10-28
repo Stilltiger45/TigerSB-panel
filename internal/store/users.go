@@ -25,6 +25,9 @@ type User struct {
 	SeenAt  int64
 	// SubToken is the secret part of the subscription address.
 	SubToken string
+	// Only, when set, is the one protocol a test link works on (see
+	// TestUsers); such a user is not in the users table.
+	Only string
 }
 
 const userColumns = `id, name, uuid, devices, enabled, created_at, up, down, online, seen_at, sub_token`

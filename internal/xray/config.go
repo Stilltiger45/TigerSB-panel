@@ -21,16 +21,28 @@ func UserID(email string) (int64, bool) {
 	return id, err == nil && id > 0
 }
 
+// Name is what a user is called inside the cores: Email for a user, and
+// test-<protocol> for a test link, which the stats then leave out.
+func Name(u store.User) string {
+	if u.Only != "" {
+		return "test-" + u.Only
+	}
+	return Email(u.ID)
+}
+
+// Serves reports whether u may use the protocol with this tag.
+func Serves(u store.User, tag string) bool { return u.Enabled && (u.Only == "" || u.Only == tag) }
+
 type obj = map[string]any
 
 // behindEdge reports a protocol that shares 443 through the edge router.
 func behindEdge(port int) bool { return port == EdgePort }
 
-func clients(users []store.User) []obj {
+func clients(users []store.User, tag string) []obj {
 	out := []obj{}
 	for _, u := range users {
-		if u.Enabled {
-			out = append(out, obj{"id": u.UUID, "email": Email(u.ID), "level": 0})
+		if Serves(u, tag) {
+			out = append(out, obj{"id": u.UUID, "email": Name(u), "level": 0})
 		}
 	}
 	return out
@@ -52,7 +64,7 @@ func inbound(tag string, port, inner int, bbr bool, users []store.User, stream o
 		"tag":      tag,
 		"port":     port,
 		"protocol": "vless",
-		"settings": obj{"clients": clients(users), "decryption": "none"},
+		"settings": obj{"clients": clients(users, tag), "decryption": "none"},
 		"sniffing": obj{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "routeOnly": true},
 	}
 	if behindEdge(port) {

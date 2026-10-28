@@ -38,6 +38,8 @@ type protocolsResponse struct {
 	Edge         string         `json:"edge"`
 	// BBRReady is false when the kernel does not let the cores pick BBR.
 	BBRReady bool `json:"bbr_ready"`
+	// Tests holds the test link of each protocol that has one (testLinks).
+	Tests map[string]string `json:"tests"`
 	// Applied says what the save did, for the message under the button.
 	Applied string `json:"applied,omitempty"`
 	Warning string `json:"warning,omitempty"`
@@ -69,6 +71,10 @@ func (s *Server) protocolsState(ctx context.Context) (*protocolsResponse, error)
 	if err != nil {
 		return nil, err
 	}
+	tests, err := s.testLinks(ctx, set, sb, domain)
+	if err != nil {
+		return nil, err
+	}
 	sb.Secret = ""
 	auto := set
 	auto.Address = ""
@@ -89,6 +95,7 @@ func (s *Server) protocolsState(ctx context.Context) (*protocolsResponse, error)
 		SingboxState: service.UnitState(s.Run, singbox.Unit),
 		Edge:         service.UnitState(s.Run, xray.EdgeUnit),
 		BBRReady:     xray.BBRReady(),
+		Tests:        tests,
 	}, nil
 }
 
@@ -153,7 +160,7 @@ func (s *Server) handleProtocols(w http.ResponseWriter, r *http.Request) {
 	// Each core restarts only when its own settings changed, so tuning TUIC
 	// or Hysteria 2 keeps Xray's connections and the other way round.
 	xrayChanged, sbChanged := !sameJSON(set, oldSet), !sameJSON(sb, oldSB)
-	users, err := s.store.Users(ctx)
+	users, err := s.store.CoreUsers(ctx)
 	if err != nil {
 		internalError(w)
 		return
