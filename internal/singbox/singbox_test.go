@@ -78,7 +78,7 @@ func TestRender(t *testing.T) {
 	if conf.Log["disabled"] != true {
 		t.Error("logs must be off")
 	}
-	if len(conf.Inbounds) != 2 {
+	if len(conf.Inbounds) != 3 {
 		t.Fatalf("inbounds: %s", raw)
 	}
 	in := conf.Inbounds[0]
@@ -409,5 +409,35 @@ func TestRenderTestLink(t *testing.T) {
 		if has != (in.Tag == TUICTag) {
 			t.Fatalf("%s: %v", in.Tag, in.Users)
 		}
+	}
+}
+
+func TestRenderNaive(t *testing.T) {
+	s := defaults(t)
+	raw, err := Render(s, users(), "vpn.example.com", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conf struct {
+		Inbounds []struct {
+			Type, Network string
+			ListenPort    int `json:"listen_port"`
+			Users         []struct{ Username, Password string }
+			TLS           struct{ ALPN []string }
+		}
+	}
+	if err := json.Unmarshal(raw, &conf); err != nil {
+		t.Fatal(err)
+	}
+	in := conf.Inbounds[2]
+	if in.Type != "naive" || in.Network != "tcp" || in.ListenPort != 2443 || fmt.Sprint(in.TLS.ALPN) != "[h2 http/1.1]" {
+		t.Fatalf("inbound: %s", raw)
+	}
+	if len(in.Users) != 1 || in.Users[0].Username != "u1" || in.Users[0].Password != s.NaivePassword(users()[0].UUID) {
+		t.Fatalf("users: %+v", in.Users)
+	}
+	s.Naive.Port = 443
+	if err := s.Validate(); err == nil {
+		t.Fatal("NaïveProxy on TCP 443 must be refused")
 	}
 }

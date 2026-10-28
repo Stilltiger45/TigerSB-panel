@@ -527,7 +527,10 @@ function testBlock(proto, core) {
     const hint = link === undefined
       ? "Отдельная ссылка только на этот протокол, чтобы проверить его стабильность отдельно от остальных. В подписки не попадает, трафик не считается."
       : "Работает только на этом протоколе. Пользователям не видна.";
-    const reload = core === "sing-box" ? " Создание и удаление перечитывает настройки sing-box: TUIC и Hysteria 2 у всех прервутся на несколько секунд." : "";
+    const reload = {
+      "sing-box": " Создание и удаление перечитывает настройки sing-box: TUIC, Hysteria 2 и NaïveProxy у всех прервутся на несколько секунд.",
+      mbox: " Создание и удаление перечитывает настройки mbox: Mieru у всех прервётся на несколько секунд.",
+    }[core] || "";
     box.replaceChildren(
       el("div", { class: "link-row" },
         el("div", { class: "link-head" }, el("b", { text: "Тестовая ссылка" }), link === undefined ? make : ""),
@@ -660,6 +663,61 @@ function hy2Card() {
   ]);
 }
 
+// naiveCard is NaïveProxy: only the port, everything else is fixed.
+function naiveCard() {
+  const p = protoData.singbox.naive;
+  const port = portInput(p, naivePortText);
+  certHint(port, "NaïveProxy");
+  return card("naive", "NaïveProxy", "sing-box", p, port, [
+    el("p", { class: "hint", text: "HTTP/2 по TCP с сертификатом сайта " + (protoData.domain || "панели") + ": для провайдера это обычный HTTPS. Пароль у каждого пользователя свой и меняется вместе с «Новыми ссылками». Работает в клиенте TigerSB, NekoBox, Hiddify и v2rayN." }),
+  ]);
+}
+
+// mieruCard is Mieru: a port range and TCP or UDP, served by mbox.
+function mieruCard() {
+  const p = protoData.singbox.mieru;
+  const hint = el("span", { class: "hint", text: mieruPortText(p) });
+  const num = (key, label) => {
+    const input = el("input", { type: "number", min: 1024, max: 65535, value: p[key], class: "num", "aria-label": label });
+    input.addEventListener("input", () => {
+      p[key] = Number(input.value);
+      hint.textContent = mieruPortText(p);
+      dirty();
+    });
+    return input;
+  };
+  const transport = el("select", { "aria-label": "Транспорт" }, ...protoData.mieru_transports.map((t) => el("option", { value: t, text: t })));
+  transport.value = p.transport;
+  transport.addEventListener("change", () => {
+    p.transport = transport.value;
+    hint.textContent = mieruPortText(p);
+    dirty();
+  });
+  const row = el("div", { class: "port-row" },
+    el("span", { class: "label" }, "Порты"),
+    el("div", { class: "port-line" }, num("port_from", "Первый порт"), el("span", { class: "muted", text: "—" }), num("port_to", "Последний порт"), transport),
+    hint);
+  return card("mieru", "Mieru", "mbox", p, row, [
+    el("p", { class: "hint", text: "Собственный протокол Mieru без TLS: снаружи это поток случайных байтов, а клиент разбрасывает подключения по портам диапазона. Работает в отдельном контейнере mbox — это сборка sing-box от автора Mieru, в официальном sing-box его нет. Пароль у каждого пользователя свой и меняется вместе с «Новыми ссылками». Нужно точное время на сервере и у клиентов. Работает в клиенте TigerSB, Clash Meta (mihomo), NekoBox и Hiddify." }),
+  ]);
+}
+
+function mieruPortText(p) {
+  if (p.port_from < 1024 || p.port_to > 65535 || p.port_from > p.port_to) return "Диапазон от 1024 до 65535, первый порт не больше последнего.";
+  if (p.port_to - p.port_from >= 100) return "Не больше 100 портов.";
+  const proto = p.transport.toLowerCase();
+  return `${p.port_to - p.port_from + 1} портов по ${p.transport}. Откройте ${p.port_from}-${p.port_to}/${proto} в файрволе хостинга, если он там есть.`;
+}
+
+function naivePortText(port) {
+  if (port < 1024) return "Можно от 1024: 443 по TCP занят сайтом и Xray.";
+  const busy = protoData.reserved[port];
+  if (busy) return `Занят: ${busy}.`;
+  const s = protoData.settings;
+  if ((s.grpc.enabled && s.grpc.port === port) || (s.xhttp.enabled && s.xhttp.port === port)) return "Занят Xray: выберите другой порт.";
+  return `TCP. Откройте ${port}/tcp в файрволе хостинга, если он там есть.`;
+}
+
 function hy2PortText(port) {
   if (port !== 443 && port < 1024) return "Можно 443 или от 1024.";
   const tuic = protoData.singbox.tuic;
@@ -694,6 +752,7 @@ function renderProtocols(d) {
   protoData = d;
   unitPill($("pr-xray"), "Xray", d.xray);
   unitPill($("pr-singbox"), "sing-box", d.singbox_state);
+  unitPill($("pr-mieru"), "mbox", d.mieru_state);
   unitPill($("pr-edge"), "Порт 443", d.edge);
   $("pr-address").value = d.settings.address;
   $("pr-address").placeholder = d.auto_address || "IP сервера";
@@ -703,7 +762,9 @@ function renderProtocols(d) {
     protoCard("grpc", "gRPC", GRPC_FIELDS),
     protoCard("xhttp", "XHTTP", XHTTP_FIELDS, xmuxBlock),
     tuicCard(),
-    hy2Card());
+    hy2Card(),
+    naiveCard(),
+    mieruCard());
 }
 
 async function loadProtocols() {

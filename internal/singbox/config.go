@@ -41,10 +41,15 @@ func ServingHy2(s Settings, domain string, haveCert bool) bool {
 	return s.Hysteria2.Enabled && domain != "" && haveCert
 }
 
-// tlsConf is the server side TLS of both protocols.
-func tlsConf(domain string) obj {
+// ServingNaive is Serving for NaïveProxy, which needs the same.
+func ServingNaive(s Settings, domain string, haveCert bool) bool {
+	return s.Naive.Enabled && domain != "" && haveCert
+}
+
+// tlsConf is the server side TLS of the protocols, with their ALPN.
+func tlsConf(domain string, alpn ...string) obj {
 	return obj{
-		"enabled": true, "server_name": domain, "alpn": []string{"h3"},
+		"enabled": true, "server_name": domain, "alpn": alpn,
 		"certificate_path": mountDir + "/" + certFile,
 		"key_path":         mountDir + "/" + keyFile,
 	}
@@ -70,7 +75,7 @@ func Render(s Settings, users []store.User, domain string, haveCert bool) ([]byt
 			"congestion_control": t.CongestionControl,
 			"auth_timeout":       seconds(t.AuthTimeout),
 			"zero_rtt_handshake": t.ZeroRTT,
-			"tls":                tlsConf(domain),
+			"tls":                tlsConf(domain, "h3"),
 			// A reload starts a new listener that knows nothing of open QUIC
 			// connections and sends no reset, so clients notice only when the
 			// idle timeout runs out: 30 s by default, 12 s here.
@@ -84,6 +89,14 @@ func Render(s Settings, users []store.User, domain string, haveCert bool) ([]byt
 	if ServingHy2(s, domain, haveCert) {
 		inbounds = append(inbounds, hy2Inbound(s, users, domain))
 	}
+	if ServingNaive(s, domain, haveCert) {
+		inbounds = append(inbounds, naiveInbound(s, users, domain))
+	}
+	return marshal(inbounds)
+}
+
+// marshal is the config around inbounds, the same for sing-box and mbox.
+func marshal(inbounds []obj) ([]byte, error) {
 	conf := obj{
 		"log":       obj{"disabled": true},
 		"inbounds":  inbounds,
@@ -99,6 +112,29 @@ func Render(s Settings, users []store.User, domain string, haveCert bool) ([]byt
 		},
 	}
 	return json.MarshalIndent(conf, "", "  ")
+}
+
+// RenderMieru builds the mbox config: a Mieru inbound on each port of the
+// range, all with the same users. Mieru needs no domain or certificate.
+func RenderMieru(s Settings, users []store.User) ([]byte, error) {
+	inbounds := []obj{}
+	m := s.Mieru
+	if m.Enabled {
+		list := []obj{}
+		for _, u := range users {
+			if xray.Serves(u, MieruTag) {
+				list = append(list, obj{"name": xray.Name(u), "password": s.MieruPassword(u.UUID)})
+			}
+		}
+		for port := m.PortFrom; port <= m.PortTo; port++ {
+			inbounds = append(inbounds, obj{
+				"type": "mieru", "tag": MieruTag + "-" + strconv.Itoa(port), "listen": "::", "listen_port": port,
+				"transport": m.Transport,
+				"users":     list,
+			})
+		}
+	}
+	return marshal(inbounds)
 }
 
 // hy2Inbound is the Hysteria 2 inbound. Without Salamander a stranger who
@@ -117,7 +153,7 @@ func hy2Inbound(s Settings, users []store.User, domain string) obj {
 		"users":                   list,
 		"bbr_profile":             h.BBRProfile,
 		"ignore_client_bandwidth": h.IgnoreClientBandwidth,
-		"tls":                     tlsConf(domain),
+		"tls":                     tlsConf(domain, "h3"),
 		"idle_timeout":            seconds(idleTimeout), // see the TUIC inbound
 	}
 	if h.UpMbps > 0 {
@@ -129,6 +165,25 @@ func hy2Inbound(s Settings, users []store.User, domain string) obj {
 		in["masquerade"] = "https://" + domain
 	}
 	return in
+}
+
+// naiveInbound is the NaïveProxy inbound: HTTP/2 over TCP, as Chrome
+// speaks it. sing-box answers anything but a CONNECT with padding and the
+// right password with an error page, so the port does not proxy for
+// strangers.
+func naiveInbound(s Settings, users []store.User, domain string) obj {
+	list := []obj{}
+	for _, u := range users {
+		if xray.Serves(u, NaiveTag) {
+			list = append(list, obj{"username": xray.Name(u), "password": s.NaivePassword(u.UUID)})
+		}
+	}
+	return obj{
+		"type": "naive", "tag": NaiveTag, "listen": "::", "listen_port": s.Naive.Port,
+		"network": "tcp",
+		"users":   list,
+		"tls":     tlsConf(domain, "h2", "http/1.1"),
+	}
 }
 
 // Links returns the tuic:// link of a user when TUIC is served. The address
@@ -176,4 +231,44 @@ func Hy2Links(s Settings, address, domain string, haveCert bool, u store.User) [
 	link := "hysteria2://" + url.QueryEscape(s.Hy2Password(u.UUID)) + "@" + host + ":" + strconv.Itoa(h.Port) +
 		"/?" + strings.Join(q, "&") + "#" + url.PathEscape(title)
 	return []core.Link{{Protocol: Hy2Tag, Title: title, URL: link}}
+}
+
+// NaiveLinks returns the naive+https:// link of a user when NaïveProxy is
+// served, in the form NekoBox, v2rayN and Hiddify read: the user name is the
+// one inside sing-box, padding is on.
+func NaiveLinks(s Settings, address, domain string, haveCert bool, u store.User) []core.Link {
+	if !ServingNaive(s, domain, haveCert) {
+		return nil
+	}
+	host := address
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	title := u.Name + " · NaïveProxy"
+	link := "naive+https://" + url.QueryEscape(xray.Name(u)) + ":" + url.QueryEscape(s.NaivePassword(u.UUID)) +
+		"@" + host + ":" + strconv.Itoa(s.Naive.Port) +
+		"?sni=" + url.QueryEscape(domain) + "&padding=true#" + url.PathEscape(title)
+	return []core.Link{{Protocol: NaiveTag, Title: title, URL: link}}
+}
+
+// MieruLinks returns the mierus:// link of a user when Mieru is on, in the
+// form "mieru export config simple" writes. The address may be an IP: Mieru
+// has no certificate.
+func MieruLinks(s Settings, address string, u store.User) []core.Link {
+	m := s.Mieru
+	if !m.Enabled || address == "" {
+		return nil
+	}
+	host := address
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	ports := strconv.Itoa(m.PortFrom)
+	if m.PortTo > m.PortFrom {
+		ports += "-" + strconv.Itoa(m.PortTo)
+	}
+	title := u.Name + " · Mieru"
+	link := "mierus://" + url.QueryEscape(xray.Name(u)) + ":" + url.QueryEscape(s.MieruPassword(u.UUID)) + "@" + host +
+		"?profile=TigerSB&port=" + ports + "&protocol=" + m.Transport + "#" + url.PathEscape(title)
+	return []core.Link{{Protocol: MieruTag, Title: title, URL: link}}
 }

@@ -1,0 +1,25 @@
+[Unit]
+Description=TigerSB Mieru: mbox (Docker)
+Documentation=https://github.com/Stilltiger45/TigerSB-panel
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Writes the config from the database, then becomes `docker run` of the
+# pinned sing-box image with the host network, running mbox (the sing-box
+# build of Mieru's author, /usr/local/lib/tigersb/mbox) instead of sing-box.
+ExecStart=/usr/local/bin/tigersb mieru run --config /etc/tigersb/config.json
+ExecStop=/usr/local/bin/tigersb mieru stop --config /etc/tigersb/config.json
+# No reload: mbox keeps Mieru's old users over a SIGHUP, so the panel
+# restarts it on a change.
+Environment=DOCKER_CONFIG=/var/lib/tigersb/docker
+Restart=always
+RestartSec=5s
+# The first start may pull the image.
+TimeoutStartSec=5min
+TimeoutStopSec=20s
+
+[Install]
+WantedBy=multi-user.target

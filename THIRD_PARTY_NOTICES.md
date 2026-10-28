@@ -26,8 +26,9 @@ TigerSB-panel распространяется под [GPL-3.0](LICENSE). Ниж
 |---|---|---|
 | [Caddy](https://github.com/caddyserver/caddy) 2.11.4 | Apache-2.0 | Веб-сервер заглушки, выпуск и продление сертификатов Let's Encrypt. Установщик скачивает официальный релиз с GitHub, сверяет SHA-512 и ставит его без изменений в `/usr/local/lib/tigersb/caddy`. Текст лицензии кладётся рядом: `/usr/local/lib/tigersb/caddy.LICENSE`. |
 | [Xray-core](https://github.com/XTLS/Xray-core) 26.9.30 | MPL-2.0 | VPN-ядро: VLESS + REALITY через gRPC и XHTTP. Установщик скачивает официальный Docker-образ `ghcr.io/xtls/xray-core`, закреплённый по хешу, и запускает его без изменений как отдельную программу. Исходники и текст лицензии: репозиторий XTLS/Xray-core. |
-| [sing-box](https://github.com/SagerNet/sing-box) 1.14.4 | GPL-3.0-or-later | Второе VPN-ядро: TUIC v5 и Hysteria 2. Установщик скачивает официальный Docker-образ `ghcr.io/sagernet/sing-box`, закреплённый по хешу, и запускает его без изменений как отдельную программу. Код sing-box в панель не входит: панель только пишет его JSON-конфиг. Исходники и текст лицензии: репозиторий SagerNet/sing-box. |
-| [Docker](https://www.docker.com/) (`docker.io` из пакетов дистрибутива) | Apache-2.0 | Запуск контейнеров Xray и sing-box. |
+| [sing-box](https://github.com/SagerNet/sing-box) 1.14.4 | GPL-3.0-or-later | Второе VPN-ядро: TUIC v5, Hysteria 2 и NaïveProxy. Установщик скачивает официальный Docker-образ `ghcr.io/sagernet/sing-box`, закреплённый по хешу, и запускает его без изменений как отдельную программу. Код sing-box в панель не входит: панель только пишет его JSON-конфиг. Исходники и текст лицензии: репозиторий SagerNet/sing-box. |
+| [mbox](https://github.com/enfein/mbox) 1.14.3 | GPL-3.0-or-later | Сборка sing-box от автора [Mieru](https://github.com/enfein/mieru) с протоколом Mieru, которого нет в официальном sing-box. Установщик скачивает статический выпуск `sing-box-1.14.3-linux-<arch>-musl.tar.gz`, проверяет SHA-256 и кладёт программу без изменений в `/usr/local/lib/tigersb/mbox` вместе с текстом лицензии; контейнер `tigersb-mieru` запускает её в образе sing-box. Код mbox в панель не входит: панель только пишет его JSON-конфиг. |
+| [Docker](https://www.docker.com/) (`docker.io` из пакетов дистрибутива) | Apache-2.0 | Запуск контейнеров Xray, sing-box и mbox. |
 
 ## Заимствованные идеи и материалы
 

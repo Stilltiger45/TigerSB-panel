@@ -116,8 +116,9 @@ func LinksFor(domain, pk string, u store.User) *Links {
 }
 
 // prio orders the transports for the client: XHTTP first, then gRPC, then
-// TUIC and Hysteria 2, whose UDP some networks block.
-var prio = map[string]int{xray.XHTTPTag: 10, xray.GRPCTag: 20, singbox.TUICTag: 30, singbox.Hy2Tag: 40}
+// TUIC and Hysteria 2, whose UDP some networks block, then NaïveProxy and
+// Mieru.
+var prio = map[string]int{xray.XHTTPTag: 10, xray.GRPCTag: 20, singbox.TUICTag: 30, singbox.Hy2Tag: 40, singbox.NaiveTag: 50, singbox.MieruTag: 60}
 
 // Profile builds the signed profile of a user: one exit (this server) with
 // every enabled protocol of every core.
@@ -308,6 +309,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cert := h.TUICCert != nil && h.TUICCert()
 		links = append(links, singbox.Links(sb, addr, domain, cert, *u)...)
 		links = append(links, singbox.Hy2Links(sb, addr, domain, cert, *u)...)
+		links = append(links, singbox.NaiveLinks(sb, addr, domain, cert, *u)...)
+		links = append(links, singbox.MieruLinks(sb, addr, *u)...)
 	}
 	if !IsTigerSB(ua) {
 		hdr.Set("Content-Type", "text/plain; charset=utf-8")

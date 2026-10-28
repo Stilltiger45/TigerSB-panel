@@ -26,29 +26,88 @@ const (
 	Unit      = "tigersb-singbox.service"
 )
 
-// Runtime is the sing-box container on this server.
+// MieruContainer and MieruUnit name the running mbox, which serves Mieru.
+const (
+	MieruContainer = "tigersb-mieru"
+	MieruUnit      = "tigersb-mieru.service"
+)
+
+// MboxBinary is where the installer puts mbox: the sing-box build of
+// Mieru's author (GPL-3.0), a pinned static release, unmodified. Official
+// sing-box has no Mieru.
+const MboxBinary = "/usr/local/lib/tigersb/mbox"
+
+// mboxPath is mbox inside its container, which is the sing-box image.
+const mboxPath = "/usr/local/bin/mbox"
+
+// Runtime is a sing-box container on this server: sing-box itself, or mbox
+// for Mieru.
 type Runtime struct {
-	Dir string // config directory with the certificate copies, /var/lib/tigersb/singbox
+	// Name is the core in messages: "sing-box" or "Mieru".
+	Name            string
+	Container, Unit string
+	Dir             string // config directory with the certificate copies, /var/lib/tigersb/singbox
 	// Certs is Caddy's storage, /var/lib/tigersb/caddy: the certificate of
-	// the panel's domain is taken from there.
+	// the panel's domain is taken from there. Empty for Mieru, which needs
+	// none.
 	Certs string
 	Image string
-	Exec  core.Exec
+	// Binary, when set, is run instead of the image's sing-box: mbox.
+	Binary string
+	// Restarts is set for mbox: its Mieru inbound keeps the old users over
+	// a SIGHUP reload, so a change restarts the container instead.
+	Restarts bool
+	Exec     core.Exec
+	render   func(s Settings, users []store.User, domain string, haveCert bool) ([]byte, error)
+}
+
+func image() string {
+	if img := os.Getenv("TIGERSB_SINGBOX_IMAGE"); img != "" {
+		return img
+	}
+	return Image
 }
 
 // DefaultRuntime is the layout the installer creates under dataDir. The image
 // can be replaced with TIGERSB_SINGBOX_IMAGE, which tests use.
 func DefaultRuntime(dataDir string) *Runtime {
-	img := os.Getenv("TIGERSB_SINGBOX_IMAGE")
-	if img == "" {
-		img = Image
+	return &Runtime{
+		Name: "sing-box", Container: Container, Unit: Unit,
+		Dir:    filepath.Join(dataDir, "singbox"),
+		Certs:  filepath.Join(dataDir, "caddy"),
+		Image:  image(),
+		Exec:   core.RealExec,
+		render: Render,
+	}
+}
+
+// MieruRuntime is mbox serving Mieru: the same sing-box image runs the mbox
+// binary, so no other image is pulled. TIGERSB_MBOX replaces the binary in
+// tests.
+func MieruRuntime(dataDir string) *Runtime {
+	bin := os.Getenv("TIGERSB_MBOX")
+	if bin == "" {
+		bin = MboxBinary
 	}
 	return &Runtime{
-		Dir:   filepath.Join(dataDir, "singbox"),
-		Certs: filepath.Join(dataDir, "caddy"),
-		Image: img,
-		Exec:  core.RealExec,
+		Name: "Mieru", Container: MieruContainer, Unit: MieruUnit,
+		Dir:      filepath.Join(dataDir, "mieru"),
+		Image:    image(),
+		Binary:   bin,
+		Restarts: true,
+		Exec:     core.RealExec,
+		render: func(s Settings, users []store.User, _ string, _ bool) ([]byte, error) {
+			return RenderMieru(s, users)
+		},
 	}
+}
+
+// binaryArgs are the docker run arguments that swap sing-box for mbox.
+func (r *Runtime) binaryArgs() []string {
+	if r.Binary == "" {
+		return nil
+	}
+	return []string{"-v", r.Binary + ":" + mboxPath + ":ro", "--entrypoint", mboxPath}
 }
 
 // ConfigPath is the live sing-box config on the host.
@@ -147,13 +206,14 @@ func (r *Runtime) Test(ctx context.Context, conf []byte) error {
 	defer os.Remove(filepath.Join(r.Dir, "test.json"))
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	out, err := r.docker(ctx, "run", "--rm", "--network", "none", "--log-driver", "none",
-		"-v", r.Dir+":"+mountDir+":ro", r.Image, "check", "-c", mountDir+"/test.json")
+	args := append([]string{"run", "--rm", "--network", "none", "--log-driver", "none",
+		"-v", r.Dir + ":" + mountDir + ":ro"}, r.binaryArgs()...)
+	out, err := r.docker(ctx, append(args, r.Image, "check", "-c", mountDir+"/test.json")...)
 	if errors.Is(err, core.ErrNoDocker) {
 		return err
 	}
 	if err != nil {
-		return fmt.Errorf("sing-box не принял настройки: %s", core.Tail(out, 6))
+		return fmt.Errorf("%s не принял настройки: %s", r.Name, core.Tail(out, 6))
 	}
 	return nil
 }
@@ -162,24 +222,25 @@ func (r *Runtime) Test(ctx context.Context, conf []byte) error {
 // host network, so sing-box sees real client addresses, and nothing else.
 // NET_BIND_SERVICE lets TUIC take UDP 443.
 func (r *Runtime) RunArgs() []string {
-	return []string{"run", "--rm", "--name", Container,
+	args := []string{"run", "--rm", "--name", r.Container,
 		"--network", "host", "--log-driver", "none",
 		"--read-only", "--cap-drop", "ALL", "--cap-add", "NET_BIND_SERVICE", "--security-opt", "no-new-privileges",
-		"-v", r.Dir + ":" + mountDir + ":ro",
-		r.Image, "run", "-c", mountDir + "/config.json"}
+		"-v", r.Dir + ":" + mountDir + ":ro"}
+	args = append(args, r.binaryArgs()...)
+	return append(args, r.Image, "run", "-c", mountDir+"/config.json")
 }
 
 // Remove deletes a container left by a crash, so the name is free.
 func (r *Runtime) Remove(ctx context.Context) {
-	r.docker(ctx, "rm", "-f", Container)
+	r.docker(ctx, "rm", "-f", r.Container)
 }
 
 // Signal asks the running sing-box to reread its config and certificate.
 // Open TUIC connections drop; clients notice by the idle timeout.
 func (r *Runtime) Signal(ctx context.Context) error {
-	out, err := r.docker(ctx, "kill", "-s", "HUP", Container)
+	out, err := r.docker(ctx, "kill", "-s", "HUP", r.Container)
 	if err != nil && !errors.Is(err, core.ErrNoDocker) {
-		return fmt.Errorf("sing-box не перечитал настройки: %s", core.Tail(out, 2))
+		return fmt.Errorf("%s не перечитал настройки: %s", r.Name, core.Tail(out, 2))
 	}
 	return err
 }
@@ -187,29 +248,33 @@ func (r *Runtime) Signal(ctx context.Context) error {
 // Restart restarts the container; on start it rebuilds the config and the
 // certificate copy from the database and Caddy's storage.
 func (r *Runtime) Restart(ctx context.Context) error {
-	out, err := r.Exec(ctx, nil, "systemctl", "restart", Unit)
+	out, err := r.Exec(ctx, nil, "systemctl", "restart", r.Unit)
 	if err != nil {
-		return fmt.Errorf("sing-box не перезапустился: %v %s. Подробности: journalctl -u %s", err, out, Unit)
+		return fmt.Errorf("%s не перезапустился: %v %s. Подробности: journalctl -u %s", r.Name, err, out, r.Unit)
 	}
 	return nil
 }
 
-// Reload makes a running sing-box reread its files; a stopped one reads
-// them when it starts.
+// Reload makes a running sing-box reread its files (mbox restarts); a
+// stopped one reads them when it starts.
 func (r *Runtime) Reload(ctx context.Context) error {
-	out, err := r.Exec(ctx, nil, "systemctl", "try-reload-or-restart", Unit)
+	verb := "try-reload-or-restart"
+	if r.Restarts {
+		verb = "try-restart"
+	}
+	out, err := r.Exec(ctx, nil, "systemctl", verb, r.Unit)
 	if err != nil && (strings.Contains(out, "not found") || strings.Contains(out, "not loaded")) {
 		// The installer has not put the unit in place yet.
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("sing-box не перечитал настройки: %v %s. Подробности: journalctl -u %s", err, out, Unit)
+		return fmt.Errorf("%s не перечитал настройки: %v %s. Подробности: journalctl -u %s", r.Name, err, out, r.Unit)
 	}
 	return nil
 }
 
-// Build reads the settings and users and renders the config.
-func Build(ctx context.Context, st *store.Store, domain string, haveCert bool) (Settings, []byte, error) {
+// Build reads the settings and users and renders the config of this core.
+func (r *Runtime) Build(ctx context.Context, st *store.Store, domain string) (Settings, []byte, error) {
 	s, err := Load(ctx, st)
 	if err != nil {
 		return s, nil, err
@@ -218,19 +283,27 @@ func Build(ctx context.Context, st *store.Store, domain string, haveCert bool) (
 	if err != nil {
 		return s, nil, err
 	}
-	conf, err := Render(s, users, domain, haveCert)
+	conf, err := r.Render(s, users, domain)
 	return s, conf, err
+}
+
+// Render renders the config of this core.
+func (r *Runtime) Render(s Settings, users []store.User, domain string) ([]byte, error) {
+	return r.render(s, users, domain, r.HaveCert())
 }
 
 // Sync copies the certificate and writes the config built from the store.
 // With reload a running sing-box rereads them, but only when something
 // changed, so the monitor timer can call it every few minutes.
 func (r *Runtime) Sync(ctx context.Context, st *store.Store, domain string, reload bool) error {
-	changedCert, err := r.CopyCert(domain, time.Now())
-	if err != nil {
-		return err
+	changedCert := false
+	if r.Certs != "" {
+		var err error
+		if changedCert, err = r.CopyCert(domain, time.Now()); err != nil {
+			return err
+		}
 	}
-	_, conf, err := Build(ctx, st, domain, r.HaveCert())
+	_, conf, err := r.Build(ctx, st, domain)
 	if err != nil {
 		return err
 	}

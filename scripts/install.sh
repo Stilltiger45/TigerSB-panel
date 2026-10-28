@@ -34,8 +34,19 @@ caddy_sha512() {
 	esac
 }
 
+# mbox serves Mieru, which official sing-box lacks: the sing-box build of
+# Mieru's author (GPL-3.0, unmodified), the static musl release, checked
+# against these hashes.
+MBOX_VERSION=1.14.3
+mbox_sha256() {
+	case "$1" in
+		amd64) echo 9137aad80895bbee35f23700ac6a49fe9049fc701fa68aa2057e7260050d8148 ;;
+		arm64) echo 9eadcd4671e959ef6a89f005ba6b45d1fa6e3dbc0f2b2d8d3e7868a674628f55 ;;
+	esac
+}
+
 binary=""
-role=""
+role=""""
 domain=""
 email=""
 main_server=""
@@ -224,7 +235,7 @@ main_sha() {
 	fi
 }
 
-UNITS="tigersb.service tigersb-caddy.service tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-singbox.service tigersb-monitor.service tigersb-monitor.timer tigersb-update.service"
+UNITS="tigersb.service tigersb-caddy.service tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-singbox.service tigersb-mieru.service tigersb-monitor.service tigersb-monitor.timer tigersb-update.service"
 
 install_unit() {
 	local src name
@@ -309,9 +320,10 @@ enable_bbr() {
 # sing-box in Docker. Run it after start_site: with a domain Caddy moves to
 # 127.0.0.1:8444, frees 443 and already reads the edge's PROXY header.
 start_vpn() {
-	install -d -m 0700 "$DATA_DIR/edge" "$DATA_DIR/docker" "$DATA_DIR/singbox"
+	install -d -m 0700 "$DATA_DIR/edge" "$DATA_DIR/docker" "$DATA_DIR/singbox" "$DATA_DIR/mieru"
 	enable_bbr
-	systemctl enable tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-singbox.service
+	install_mbox || echo "mbox не скачался: Mieru не заработает, пока установщик не запустят снова (--update)." >&2
+	systemctl enable tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-singbox.service tigersb-mieru.service
 	systemctl restart tigersb-edge.service tigersb-sub.service
 	if install_docker; then
 		local image core
@@ -320,8 +332,27 @@ start_vpn() {
 			echo "Скачиваю образ $core ($image)..."
 			docker pull -q "$image" >/dev/null || echo "Образ не скачался, $core попробует ещё раз при запуске." >&2
 		done
-		systemctl restart tigersb-xray.service tigersb-singbox.service
+		systemctl restart tigersb-xray.service tigersb-singbox.service tigersb-mieru.service
 	fi
+}
+
+# install_mbox puts the pinned mbox release into $LIB_DIR/mbox; the Mieru
+# container runs it from there.
+install_mbox() {
+	if [ -x "$LIB_DIR/mbox" ] && "$LIB_DIR/mbox" version 2>/dev/null | grep -q "^sing-box version $MBOX_VERSION$"; then
+		return 0
+	fi
+	local dir name
+	dir="$(mktemp -d)"
+	name="sing-box-$MBOX_VERSION-linux-$arch-musl"
+	echo "Скачиваю mbox $MBOX_VERSION (Mieru)..." >&2
+	curl -fsSL -o "$dir/mbox.tar.gz" "https://github.com/enfein/mbox/releases/download/v$MBOX_VERSION/$name.tar.gz" || { rm -rf "$dir"; return 1; }
+	echo "$(mbox_sha256 "$arch")  $dir/mbox.tar.gz" | sha256sum -c --quiet - >&2 || { rm -rf "$dir"; die "контрольная сумма mbox не совпала"; }
+	tar -xzf "$dir/mbox.tar.gz" -C "$dir"
+	install -d -m 0755 "$LIB_DIR"
+	install -m 0755 "$dir/$name/sing-box" "$LIB_DIR/mbox"
+	install -m 0644 "$dir/$name/LICENSE" "$LIB_DIR/mbox.LICENSE"
+	rm -rf "$dir"
 }
 
 # install_caddy puts the pinned Caddy release into $LIB_DIR. It prints

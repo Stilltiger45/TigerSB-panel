@@ -64,8 +64,10 @@ type Server struct {
 
 	// Xray is the VPN core in Docker and the edge router on 443.
 	Xray *xray.Runtime
-	// Singbox is the second core, with TUIC and Hysteria 2.
+	// Singbox is the second core, with TUIC, Hysteria 2 and NaïveProxy.
 	Singbox *singbox.Runtime
+	// Mieru is mbox, the sing-box build that serves Mieru.
+	Mieru *singbox.Runtime
 	// LocalIPs lists the server's addresses, for links.
 	LocalIPs func() ([]net.IP, error)
 	// xrayMu keeps user and protocol changes in order.
@@ -96,6 +98,7 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, version string) *Ser
 		GitHub:   &http.Client{Timeout: 20 * time.Second},
 		Xray:     xray.DefaultRuntime(filepath.Dir(cfg.DBPath)),
 		Singbox:  singbox.DefaultRuntime(filepath.Dir(cfg.DBPath)),
+		Mieru:    singbox.MieruRuntime(filepath.Dir(cfg.DBPath)),
 		LocalIPs: xray.LocalIPs,
 	}
 }

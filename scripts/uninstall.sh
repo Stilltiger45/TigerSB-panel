@@ -51,11 +51,11 @@ for u in "${units[@]}"; do
 	echo "  - $u"
 done
 [ ! -e "$BIN" ] || echo "  - $BIN"
-[ ! -d "$LIB_DIR" ] || echo "  - $LIB_DIR (Caddy)"
+[ ! -d "$LIB_DIR" ] || echo "  - $LIB_DIR (Caddy и mbox)"
 [ ! -d "$CONF_DIR" ] || echo "  - $CONF_DIR (настройки и секретный путь)"
 [ ! -d "$DATA_DIR" ] || echo "  - $DATA_DIR (база, пользователи VPN, сертификаты, заглушка, точки восстановления)"
 if command -v docker >/dev/null; then
-	echo "  - контейнеры tigersb-xray и tigersb-singbox, образы Xray и sing-box (сам Docker останется)"
+	echo "  - контейнеры tigersb-xray, tigersb-singbox и tigersb-mieru, образы Xray и sing-box (сам Docker останется)"
 fi
 echo
 
@@ -79,7 +79,7 @@ if [ "$backup" -eq 1 ]; then
 		[ ! -d "$d" ] || dirs+=("${d#/}")
 	done
 	# Stop first so the SQLite database is not copied mid-write.
-	systemctl stop tigersb-monitor.timer tigersb.service tigersb-caddy.service tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-singbox.service 2>/dev/null || true
+	systemctl stop tigersb-monitor.timer tigersb.service tigersb-caddy.service tigersb-edge.service tigersb-sub.service tigersb-xray.service tigersb-singbox.service tigersb-mieru.service 2>/dev/null || true
 	# Restore points are only useful on this server; they would bloat the copy.
 	(umask 077 && tar -czf "$archive" --exclude="${DATA_DIR#/}/restore" -C / "${dirs[@]}")
 	echo "Копия сохранена: $archive"
@@ -95,7 +95,7 @@ done
 systemctl daemon-reload 2>/dev/null || true
 
 if command -v docker >/dev/null; then
-	docker rm -f tigersb-xray tigersb-singbox >/dev/null 2>&1 || true
+	docker rm -f tigersb-xray tigersb-singbox tigersb-mieru >/dev/null 2>&1 || true
 	for repo in ghcr.io/xtls/xray-core ghcr.io/sagernet/sing-box; do
 		images="$(docker images -q "$repo" 2>/dev/null || true)"
 		if [ -n "$images" ]; then

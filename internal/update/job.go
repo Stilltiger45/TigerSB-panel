@@ -32,6 +32,7 @@ const (
 	SubUnit     = "tigersb-sub.service"
 	XrayUnit    = "tigersb-xray.service"
 	SingboxUnit = "tigersb-singbox.service"
+	MieruUnit   = "tigersb-mieru.service"
 )
 
 // Phases of a job.
@@ -361,7 +362,7 @@ func (u *Updater) restore(ctx context.Context, id string, start bool, log io.Wri
 	}
 	// The edge router, the subscriptions and the VPN cores rebuild their
 	// state from the restored database.
-	for _, name := range []string{EdgeUnit, SubUnit, XrayUnit, SingboxUnit} {
+	for _, name := range []string{EdgeUnit, SubUnit, XrayUnit, SingboxUnit, MieruUnit} {
 		if after[name] {
 			if out, err := u.run("systemctl", "enable", name); err != nil {
 				fmt.Fprintf(log, "systemctl enable %s: %v %s\n", name, err, out)

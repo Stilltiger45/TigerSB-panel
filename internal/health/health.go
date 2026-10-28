@@ -150,6 +150,7 @@ func Run(ctx context.Context, e Env) (*Report, error) {
 	add(checkSub(e, set))
 	add(checkXray(ctx, e))
 	add(checkSingbox(ctx, e, set))
+	add(checkMieru(ctx, e))
 	add(Result{ID: "routers", Title: "Точки маршрутизации", State: Soon, Detail: "Появятся вместе с каскадом: панель будет проверять каждую по SSH."})
 
 	r.State = OK
@@ -219,7 +220,7 @@ func listeningUDP(port int) bool {
 }
 
 func checkSingbox(ctx context.Context, e Env, set site.Settings) Result {
-	r := Result{ID: "singbox", Title: "sing-box (TUIC, Hysteria 2)"}
+	r := Result{ID: "singbox", Title: "sing-box (TUIC, Hysteria 2, NaïveProxy)"}
 	sb, err := singbox.Load(ctx, e.Store)
 	if err != nil {
 		r.State, r.Detail = Fail, err.Error()
@@ -228,27 +229,31 @@ func checkSingbox(ctx context.Context, e Env, set site.Settings) Result {
 	type proto struct {
 		name string
 		port int
+		tcp  bool
 	}
 	var on []proto
 	if sb.TUIC.Enabled {
-		on = append(on, proto{"TUIC", sb.TUIC.Port})
+		on = append(on, proto{"TUIC", sb.TUIC.Port, false})
 	}
 	if sb.Hysteria2.Enabled {
-		on = append(on, proto{"Hysteria 2", sb.Hysteria2.Port})
+		on = append(on, proto{"Hysteria 2", sb.Hysteria2.Port, false})
+	}
+	if sb.Naive.Enabled {
+		on = append(on, proto{"NaïveProxy", sb.Naive.Port, true})
 	}
 	var names, ports []string
 	for _, p := range on {
 		names = append(names, p.name)
-		ports = append(ports, p.name+" :"+strconv.Itoa(p.port)+"/udp")
+		ports = append(ports, p.name+" :"+strconv.Itoa(p.port)+map[bool]string{false: "/udp", true: "/tcp"}[p.tcp])
 	}
-	these := strings.Join(names, " и ")
+	these := strings.Join(names, ", ")
 	state := service.UnitState(e.Run, singbox.Unit)
 	switch {
 	case state != "active":
-		r.State, r.Detail = Fail, fmt.Sprintf("Контейнер не работает (%s): TUIC и Hysteria 2 недоступны. Подробности: journalctl -u %s", state, singbox.Unit)
+		r.State, r.Detail = Fail, fmt.Sprintf("Контейнер не работает (%s): TUIC, Hysteria 2 и NaïveProxy недоступны. Подробности: journalctl -u %s", state, singbox.Unit)
 		return r
 	case len(on) == 0:
-		r.State, r.Detail = Off, "Работает, TUIC и Hysteria 2 выключены."
+		r.State, r.Detail = Off, "Работает, TUIC, Hysteria 2 и NaïveProxy выключены."
 		return r
 	case set.Domain == "":
 		r.State, r.Detail = Warn, these+" ждут домен: задайте его на вкладке «Сайт и сертификат»."
@@ -258,12 +263,46 @@ func checkSingbox(ctx context.Context, e Env, set site.Settings) Result {
 		return r
 	}
 	for _, p := range on {
-		if !e.ListeningUDP(p.port) {
+		if p.tcp && e.Listening != nil && !e.Listening(p.port) {
+			r.State, r.Detail = Fail, fmt.Sprintf("%s не слушает TCP %d. Подробности: journalctl -u %s", p.name, p.port, singbox.Unit)
+			return r
+		}
+		if !p.tcp && !e.ListeningUDP(p.port) {
 			r.State, r.Detail = Fail, fmt.Sprintf("%s не слушает UDP %d. Подробности: journalctl -u %s", p.name, p.port, singbox.Unit)
 			return r
 		}
 	}
-	r.State, r.Detail = OK, "Работает: "+strings.Join(ports, ", ")+". Порты должны быть открыты для UDP в файрволе и у хостера."
+	r.State, r.Detail = OK, "Работает: "+strings.Join(ports, ", ")+". Порты должны быть открыты в файрволе и у хостера."
+	return r
+}
+
+// checkMieru looks at mbox: the container and the first port of the range.
+func checkMieru(ctx context.Context, e Env) Result {
+	r := Result{ID: "mieru", Title: "Mieru (mbox)"}
+	sb, err := singbox.Load(ctx, e.Store)
+	if err != nil {
+		r.State, r.Detail = Fail, err.Error()
+		return r
+	}
+	m := sb.Mieru
+	state := service.UnitState(e.Run, singbox.MieruUnit)
+	switch {
+	case state != "active":
+		r.State, r.Detail = Fail, fmt.Sprintf("Контейнер не работает (%s): Mieru недоступен. Подробности: journalctl -u %s", state, singbox.MieruUnit)
+		return r
+	case !m.Enabled:
+		r.State, r.Detail = Off, "Работает, Mieru выключен."
+		return r
+	}
+	listening := e.ListeningUDP
+	if m.Transport == "TCP" {
+		listening = e.Listening
+	}
+	if listening != nil && !listening(m.PortFrom) {
+		r.State, r.Detail = Fail, fmt.Sprintf("Mieru не слушает %s %d. Подробности: journalctl -u %s", m.Transport, m.PortFrom, singbox.MieruUnit)
+		return r
+	}
+	r.State, r.Detail = OK, fmt.Sprintf("Работает: порты %d-%d/%s. Они должны быть открыты в файрволе и у хостера. Mieru нужно точное время на сервере и у клиентов.", m.PortFrom, m.PortTo, strings.ToLower(m.Transport))
 	return r
 }
 

@@ -54,7 +54,8 @@ const usage = `TigerSB panel
   tigersb restore  точки восстановления: restore list | restore create | restore apply <имя>
   tigersb monitor  снять показатели и проверить сервер (вызывает таймер раз в 5 минут)
   tigersb xray     VPN-ядро Xray в Docker (gRPC, XHTTP): xray status | xray apply
-  tigersb singbox  VPN-ядро sing-box в Docker (TUIC): singbox status | singbox apply
+  tigersb singbox  VPN-ядро sing-box в Docker (TUIC, Hysteria 2, NaïveProxy): singbox status | singbox apply
+  tigersb mieru    Mieru в Docker (mbox, сборка sing-box автора Mieru): mieru status | mieru apply
   tigersb edge     делить порт 443 между сайтом и VPN (вызывает systemd)
   tigersb sub      выдавать подписки пользователей (вызывает systemd)
   tigersb version  версия
@@ -98,8 +99,8 @@ func main() {
 		err = cmdJob(os.Args[2:])
 	case "xray":
 		err = cmdXray(os.Args[2:])
-	case "singbox":
-		err = cmdSingbox(os.Args[2:])
+	case "singbox", "mieru":
+		err = cmdSingbox(os.Args[1], os.Args[2:])
 	case "edge":
 		err = cmdEdge(os.Args[2:])
 	case "sub":

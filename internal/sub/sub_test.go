@@ -75,7 +75,8 @@ func TestProfileForTigerSB(t *testing.T) {
 		t.Fatalf("profile: %+v", p)
 	}
 	tr := p.Exits[0].Transports
-	if len(tr) != 2 || tr[0].ID != "grpc" || tr[0].Prio != 20 || tr[1].ID != "xhttp" || tr[1].Prio != 10 {
+	// Without a certificate only Xray and Mieru, which needs none, are there.
+	if len(tr) != 3 || tr[0].ID != "grpc" || tr[0].Prio != 20 || tr[1].ID != "xhttp" || tr[1].Prio != 10 || tr[2].ID != "mieru" || tr[2].Prio != 60 {
 		t.Fatalf("transports: %+v", tr)
 	}
 	if !strings.Contains(string(tr[1].Xray), u.UUID) || !strings.Contains(string(tr[1].Xray), `"network":"xhttp"`) {
@@ -99,8 +100,12 @@ func TestPlainForOtherClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(string(raw), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], "vless://"+u.UUID+"@") {
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "vless://"+u.UUID+"@") {
 		t.Fatalf("links: %q", lines)
+	}
+	// Mieru: the user's name inside mbox and the whole port range.
+	if !strings.HasPrefix(lines[2], "mierus://u1:") || !strings.Contains(lines[2], "@vpn.example.com?profile=TigerSB&port=2012-2022&protocol=TCP#") {
+		t.Fatalf("mieru link: %q", lines[2])
 	}
 	if w.Header().Get("Profile-Update-Interval") != "6" || !strings.HasPrefix(w.Header().Get("Subscription-Userinfo"), "upload=0; download=0") {
 		t.Errorf("headers: %v", w.Header())
@@ -217,7 +222,7 @@ func TestSingboxInSubscriptions(t *testing.T) {
 		t.Errorf("name %q, title %q", p.Name, w.Header().Get("Profile-Title"))
 	}
 	tr := p.Exits[0].Transports
-	if len(tr) != 4 || tr[2].ID != "tuic" || tr[2].Prio != 30 || !strings.Contains(string(tr[2].Xray), `"serverName":"vpn.example.com"`) {
+	if len(tr) != 6 || tr[2].ID != "tuic" || tr[2].Prio != 30 || !strings.Contains(string(tr[2].Xray), `"serverName":"vpn.example.com"`) {
 		t.Fatalf("transports: %+v", tr)
 	}
 	// Hysteria 2 reaches the client with Salamander and its password.
@@ -227,10 +232,17 @@ func TestSingboxInSubscriptions(t *testing.T) {
 	w = get(h, http.MethodGet, "/sub/"+u.SubToken, "Hiddify/2.0", "hw1")
 	raw, _ := base64.StdEncoding.DecodeString(w.Body.String())
 	lines := strings.Split(string(raw), "\n")
-	if len(lines) != 4 || !strings.HasPrefix(lines[2], "tuic://"+u.UUID+":") || !strings.Contains(lines[2], "sni=vpn.example.com") {
+	if len(lines) != 6 || !strings.HasPrefix(lines[2], "tuic://"+u.UUID+":") || !strings.Contains(lines[2], "sni=vpn.example.com") {
 		t.Fatalf("links: %q", lines)
 	}
 	if !strings.HasPrefix(lines[3], "hysteria2://") || !strings.Contains(lines[3], "@vpn.example.com:443/?sni=vpn.example.com&obfs=salamander&obfs-password=") {
 		t.Fatalf("hysteria2 link: %q", lines[3])
+	}
+	// NaïveProxy: the user's name inside sing-box, the TCP port and padding.
+	if !strings.HasPrefix(lines[4], "naive+https://u1:") || !strings.Contains(lines[4], "@vpn.example.com:2443?sni=vpn.example.com&padding=true#") {
+		t.Fatalf("naive link: %q", lines[4])
+	}
+	if nv := string(tr[4].Xray); tr[4].ID != "naive" || tr[4].Prio != 50 || !strings.Contains(nv, `"port":2443`) || !strings.Contains(nv, `"padding":true`) {
+		t.Fatalf("naive: %s", nv)
 	}
 }

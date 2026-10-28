@@ -36,8 +36,8 @@ func newWorld(t *testing.T) *world {
 	w := &world{units: map[string]string{
 		"tigersb.service": "active", "tigersb-caddy.service": "active",
 		"tigersb-edge.service": "active", "tigersb-xray.service": "active",
-		"tigersb-sub.service": "active", "tigersb-singbox.service": "active",
-	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true, 10086: true},
+		"tigersb-sub.service": "active", "tigersb-singbox.service": "active", "tigersb-mieru.service": "active",
+	}, routed: true, ntp: "yes", ports: map[int]bool{8443: true, 10442: true, 10086: true, 2443: true, 2012: true},
 		udp: map[int]bool{8443: true, 443: true}, cert: true}
 	caddy := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if w.routed && strings.HasPrefix(r.URL.Path, "/"+secret+"/") {
@@ -105,7 +105,7 @@ func TestHealthyServer(t *testing.T) {
 	for id, want := range map[string]string{
 		"panel": OK, "caddy": OK, "stub": OK, "dns": OK, "route": OK, "clock": OK,
 		"internet": OK, "db": OK, "update": OK, "monitor": Warn, "restore": Warn,
-		"disk": Off, "edge": OK, "xray": OK, "singbox": OK, "routers": Soon,
+		"disk": Off, "edge": OK, "xray": OK, "singbox": OK, "mieru": OK, "routers": Soon,
 	} {
 		if got[id] != want {
 			t.Errorf("%s: %s, want %s", id, got[id], want)
@@ -209,7 +209,7 @@ func TestSingbox(t *testing.T) {
 	w.cert = true
 	r, _ := Run(ctx, w.env)
 	for _, res := range r.Results {
-		if res.ID == "singbox" && !strings.Contains(res.Detail, "TUIC :8443/udp, Hysteria 2 :443/udp") {
+		if res.ID == "singbox" && !strings.Contains(res.Detail, "TUIC :8443/udp, Hysteria 2 :443/udp, NaïveProxy :2443/tcp") {
 			t.Errorf("detail: %s", res.Detail)
 		}
 	}
@@ -218,13 +218,18 @@ func TestSingbox(t *testing.T) {
 	w.udp[443] = true
 	w.udp[8443] = false
 	check(Fail, "UDP 8443 not bound")
+	w.udp[8443] = true
+	w.ports[2443] = false
+	check(Fail, "TCP 2443 not listening")
+	w.ports[2443] = true
 	s, _ := singbox.Load(ctx, w.env.Store)
 	s.TUIC.Enabled = false
 	singbox.Save(ctx, w.env.Store, s)
 	check(OK, "TUIC off, Hysteria 2 on")
 	s.Hysteria2.Enabled = false
+	s.Naive.Enabled = false
 	singbox.Save(ctx, w.env.Store, s)
-	check(Off, "both off")
+	check(Off, "all off")
 	w.units["tigersb-singbox.service"] = "failed"
 	check(Fail, "container down")
 }
@@ -250,4 +255,25 @@ func TestListeningUDP(t *testing.T) {
 	if listeningUDP(port) {
 		t.Errorf("closed port %d still seen", port)
 	}
+}
+
+func TestMieru(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	check := func(want, why string) {
+		t.Helper()
+		r, _ := Run(ctx, w.env)
+		if got := states(r)["mieru"]; got != want {
+			t.Errorf("%s: %s, want %s", why, got, want)
+		}
+	}
+	check(OK, "running")
+	w.ports[2012] = false
+	check(Fail, "TCP 2012 not listening")
+	s, _ := singbox.Load(ctx, w.env.Store)
+	s.Mieru.Enabled = false
+	singbox.Save(ctx, w.env.Store, s)
+	check(Off, "off")
+	w.units["tigersb-mieru.service"] = "failed"
+	check(Fail, "container down")
 }

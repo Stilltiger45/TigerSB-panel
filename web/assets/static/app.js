@@ -359,7 +359,7 @@ function renderHealth(r) {
 }
 
 // ---- VPN cores: one card per container with a restart button ----
-const CORE_DROP = { xray: "Подключения через gRPC и XHTTP прервутся на секунду.", singbox: "Подключения через TUIC прервутся, клиенты переподключатся за несколько секунд." };
+const CORE_DROP = { xray: "Подключения через gRPC и XHTTP прервутся на секунду.", singbox: "Подключения через TUIC, Hysteria 2 и NaïveProxy прервутся, клиенты переподключатся за несколько секунд.", mieru: "Подключения через Mieru прервутся, клиенты переподключатся сами." };
 
 function coreMessage(text, bad) {
   const box = $("core-msg");
