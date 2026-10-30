@@ -116,9 +116,9 @@ func TestUsersComeAndGo(t *testing.T) {
 		}
 	}
 
-	// New links for Мама while she downloads over XHTTP: Xray drops the user,
-	// sees her connections still open and restarts to end them; the restart
-	// reads her new key, so it is not added again.
+	// New links for Мама while she downloads over XHTTP: Xray swaps her key
+	// at once, sees her connections still open and restarts to end them
+	// together with the reload of sing-box and mbox.
 	f.sessions = map[string]int{"u1": 2}
 	n := len(f.calls)
 	r := decodeUsers(t, do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":1,"reissue":true}`, c).Body.Bytes())
@@ -126,7 +126,7 @@ func TestUsersComeAndGo(t *testing.T) {
 	calls := since(n)
 	if r.Warning != "" || !strings.Contains(calls, "rmu --server=127.0.0.1:10085 -tag=xhttp u1") ||
 		!strings.Contains(calls, "statsonline --server=127.0.0.1:10085 -email u1") || !strings.Contains(calls, "systemctl restart tigersb-xray.service") ||
-		strings.Contains(calls, " adu ") {
+		!strings.Contains(calls, " adu ") {
 		t.Fatalf("reissue (%s):\n%s", r.Warning, calls)
 	}
 	// sing-box rereads its config, mbox restarts: both end the old connections.
@@ -179,4 +179,67 @@ func TestUsersComeAndGo(t *testing.T) {
 	f.sessions = nil
 	do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":3,"enabled":true}`, c)
 	served("Сын turned on", son.UUID, true)
+}
+
+// TestUsersBatch: changes within ApplyDelay go into sing-box and mbox with
+// one reload, and the open connections of removed users end with at most
+// one Xray restart; Xray takes the users themselves at once.
+func TestUsersBatch(t *testing.T) {
+	s, f, c := vpnServer(t)
+	caddyCert(t, s.Site.Dir, "example.com")
+	s.applyDelay = time.Hour
+	count := func(from int, what string) int {
+		n := 0
+		for _, call := range f.calls[from:] {
+			if strings.Contains(call, what) {
+				n++
+			}
+		}
+		return n
+	}
+	start := len(f.calls)
+	var r usersResponse
+	for _, name := range []string{"Мама", "Папа", "Сын"} {
+		r = decodeUsers(t, do(s, http.MethodPost, "/"+secret+"/api/users/add", `{"name":"`+name+`","devices":2}`, c).Body.Bytes())
+	}
+	f.sessions = map[string]int{"u2": 1, "u3": 1}
+	do(s, http.MethodPost, "/"+secret+"/api/users/delete", `{"id":2}`, c)
+	r = decodeUsers(t, do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":3,"enabled":false}`, c).Body.Bytes())
+	if count(start, " adu ") != 3 || count(start, " rmu ") != 4 {
+		t.Fatalf("Xray did not take the users at once:\n%s", strings.Join(f.calls[start:], "\n"))
+	}
+	if count(start, "systemctl") != 0 || r.Pending < 3500 {
+		t.Fatalf("pending %d, calls:\n%s", r.Pending, strings.Join(f.calls[start:], "\n"))
+	}
+	if conf, _ := os.ReadFile(s.Singbox.ConfigPath()); strings.Contains(string(conf), r.Users[0].UUID) {
+		t.Fatal("sing-box config changed before the batch")
+	}
+
+	// «Применить сейчас»: one reload, one mbox restart, one Xray restart.
+	start = len(f.calls)
+	r = decodeUsers(t, do(s, http.MethodPost, "/"+secret+"/api/users/apply", "{}", c).Body.Bytes())
+	if r.Pending != 0 || r.Warning != "" || count(start, "try-reload-or-restart tigersb-singbox") != 1 ||
+		count(start, "try-restart tigersb-mieru") != 1 || count(start, "restart tigersb-xray") != 1 {
+		t.Fatalf("apply (%d, %q):\n%s", r.Pending, r.Warning, strings.Join(f.calls[start:], "\n"))
+	}
+	conf, _ := os.ReadFile(s.Singbox.ConfigPath())
+	if !strings.Contains(string(conf), r.Users[0].UUID) {
+		t.Fatal("Мама is not in sing-box after the batch")
+	}
+
+	// The timer applies by itself; removed users who went offline cost no
+	// restart.
+	s.applyDelay = 50 * time.Millisecond
+	f.sessions = nil
+	start = len(f.calls)
+	do(s, http.MethodPost, "/"+secret+"/api/users/delete", `{"id":1}`, c)
+	deadline := time.Now().Add(5 * time.Second)
+	for s.waiting() > 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	s.xrayMu.Lock()
+	defer s.xrayMu.Unlock()
+	if count(start, "try-reload-or-restart tigersb-singbox") != 1 || count(start, "restart tigersb-xray") != 0 {
+		t.Fatalf("timer:\n%s", strings.Join(f.calls[start:], "\n"))
+	}
 }

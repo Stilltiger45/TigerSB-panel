@@ -317,6 +317,14 @@ func (r *Runtime) Sync(ctx context.Context, st *store.Store, domain string, relo
 	if err != nil {
 		return err
 	}
+	// A running core keeps its old config when it does not accept the new
+	// one, with the users that are gone. So a changed config is checked
+	// first, and one that does not pass is not put in place.
+	if old, _ := os.ReadFile(r.ConfigPath()); reload && !bytes.Equal(old, conf) {
+		if err := r.Test(ctx, conf); err != nil && !errors.Is(err, core.ErrNoDocker) {
+			return err
+		}
+	}
 	changedConf, err := r.writeFile("config.json", conf)
 	if err != nil {
 		return err

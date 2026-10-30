@@ -127,6 +127,10 @@ func RenderMieru(s Settings, users []store.User) ([]byte, error) {
 				list = append(list, obj{"name": xray.Name(u), "password": s.MieruPassword(u.UUID)})
 			}
 		}
+		if len(list) == 0 {
+			name, pw := s.Placeholder()
+			list = append(list, obj{"name": name, "password": pw})
+		}
 		for _, tr := range m.Transports() {
 			for port := m.PortFrom; port <= m.PortTo; port++ {
 				inbounds = append(inbounds, obj{
@@ -183,6 +187,10 @@ func naiveInbounds(s Settings, users []store.User, domain string) []obj {
 		if xray.Serves(u, NaiveTag) {
 			list = append(list, obj{"username": xray.Name(u), "password": s.NaivePassword(u.UUID)})
 		}
+	}
+	if len(list) == 0 {
+		name, pw := s.Placeholder()
+		list = append(list, obj{"username": name, "password": pw})
 	}
 	var out []obj
 	if n.TCP() {

@@ -83,6 +83,15 @@ const (
 	dialTimeout  = 5 * time.Second
 )
 
+// Limits of connections that have not sent their ClientHello yet: from one
+// address (an IPv6 /64 counts as one) and from all. A real client sends it
+// at once, so a full limit means a flood that holds connections open; the
+// connections over it are closed right away.
+const (
+	maxHellosPerIP = 64
+	maxHellos      = 4096
+)
+
 // Server accepts connections and routes them.
 type Server struct {
 	// Path is the routes file, re-read when it changes.
@@ -100,6 +109,52 @@ type Server struct {
 	fwMu     sync.Mutex
 	open     map[string]*forwarder
 	fwWarned sync.Once
+
+	hMu     sync.Mutex
+	hellos  map[string]int // connections waiting for their ClientHello, by address
+	hTotal  int
+	hWarned time.Time
+}
+
+// enter counts a connection that waits for its ClientHello; false means a
+// limit is full and the connection is to be closed.
+func (s *Server) enter(key string) bool {
+	s.hMu.Lock()
+	defer s.hMu.Unlock()
+	if s.hellos == nil {
+		s.hellos = map[string]int{}
+	}
+	if s.hellos[key] >= maxHellosPerIP || s.hTotal >= maxHellos {
+		if time.Since(s.hWarned) > time.Minute {
+			s.hWarned = time.Now()
+			log.Printf("edge: слишком много подключений без ClientHello (с %s: %d, всего %d), лишние закрываю", key, s.hellos[key], s.hTotal)
+		}
+		return false
+	}
+	s.hellos[key]++
+	s.hTotal++
+	return true
+}
+
+func (s *Server) leave(key string) {
+	s.hMu.Lock()
+	defer s.hMu.Unlock()
+	if s.hellos[key]--; s.hellos[key] <= 0 {
+		delete(s.hellos, key)
+	}
+	s.hTotal--
+}
+
+// addrKey is the address a limit counts by: the IP, or its /64 for IPv6.
+func addrKey(a net.Addr) string {
+	t, ok := a.(*net.TCPAddr)
+	if !ok {
+		return a.String()
+	}
+	if ip4 := t.IP.To4(); ip4 != nil {
+		return ip4.String()
+	}
+	return t.IP.Mask(net.CIDRMask(64, 128)).String()
 }
 
 // Reload re-reads the routes file when it changed and brings the forwarded
@@ -168,8 +223,13 @@ func (s *Server) Watch(interval time.Duration, stop <-chan struct{}) {
 
 func (s *Server) handle(c net.Conn) {
 	defer c.Close()
+	key := addrKey(c.RemoteAddr())
+	if !s.enter(key) {
+		return
+	}
 	c.SetReadDeadline(time.Now().Add(helloTimeout))
 	sni, hello, err := ReadHello(c)
+	s.leave(key)
 	if err != nil && len(hello) == 0 {
 		return
 	}

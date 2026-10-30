@@ -17,7 +17,6 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
-	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
@@ -66,7 +65,10 @@ type usersResponse struct {
 	// Protocols is the state of each protocol now (health.Protocols).
 	Protocols []health.Result `json:"protocols"`
 	Live      bool            `json:"live"` // traffic and online come from the running Xray
-	Warning   string          `json:"warning,omitempty"`
+	// Pending is how many seconds the last changes still wait for
+	// sing-box and mbox, 0 when none wait (see ApplyDelay).
+	Pending int    `json:"pending"`
+	Warning string `json:"warning,omitempty"`
 }
 
 func newUUID() (string, error) {
@@ -144,6 +146,7 @@ func (s *Server) usersState(ctx context.Context) (*usersResponse, error) {
 	resp := &usersResponse{
 		Users: []userView{}, Address: s.address(ctx, set), Domain: domain,
 		Xray: s.xrayState(), Sub: service.UnitState(s.Run, sub.Unit),
+		Pending: int((s.waiting() + time.Second - 1) / time.Second),
 	}
 	if resp.Protocols, err = health.Protocols(ctx, s.healthEnv()); err != nil {
 		return nil, err
@@ -205,34 +208,39 @@ func (s *Server) sync(ctx context.Context) error {
 	return s.Xray.Sync(ctx, s.store, domain, false)
 }
 
-// live applies a user change to the running cores. Xray takes it without a
-// restart; sing-box has no such API and rereads its config, which stalls
-// TUIC and Hysteria 2 clients for up to 12 s (see singbox.Render). A stopped core reads
-// the new config when it starts, so only a running one is told.
-func (s *Server) live(ctx context.Context, f func(xray.Settings) error) string {
+// live applies a user change to the running cores. Xray takes it at once
+// without a restart; f returns the names whose open connections must end,
+// which takes a restart. sing-box and mbox have no user API and reread
+// their configs, so they take the change with the next batch, together
+// with those restarts (see later). A stopped Xray reads the new config
+// when it starts, so only a running one is told.
+func (s *Server) live(ctx context.Context, f func(xray.Settings) (ended []string, err error)) string {
+	var ended []string
 	warning := ""
-	if domain, err := s.domain(ctx); err != nil {
-		log.Printf("sing-box live change: %v", err)
-	} else {
-		for _, rt := range []*singbox.Runtime{s.Singbox, s.Mieru} {
-			if err := rt.Sync(ctx, s.store, domain, true); err != nil {
-				log.Printf("%s live change: %v", rt.Name, err)
-				warning = "Изменение сохранено, но " + err.Error() + "."
-			}
+	if s.xrayState() == "active" {
+		set, err := xray.Load(ctx, s.store)
+		if err == nil {
+			ended, err = f(set)
+		}
+		if err != nil {
+			log.Printf("xray live change: %v", err)
+			warning = "Изменение сохранено, но Xray его не принял на лету: " + err.Error() + ". Оно вступит в силу после перезапуска Xray."
 		}
 	}
-	if s.xrayState() != "active" {
-		return warning
-	}
-	set, err := xray.Load(ctx, s.store)
-	if err == nil {
-		err = f(set)
-	}
-	if err != nil {
-		log.Printf("xray live change: %v", err)
-		return "Изменение сохранено, но Xray его не принял на лету: " + err.Error() + ". Оно вступит в силу после перезапуска Xray."
+	if w := s.later(ctx, ended...); w != "" {
+		warning = w
 	}
 	return warning
+}
+
+// removeUser takes a user out of Xray: ended has its name when it still
+// has open connections.
+func (s *Server) removeUser(ctx context.Context, set xray.Settings, id int64) (ended []string, err error) {
+	online, err := s.Xray.RemoveUser(ctx, set, id)
+	if online {
+		ended = []string{xray.Email(id)}
+	}
+	return ended, err
 }
 
 func (s *Server) respondUsers(w http.ResponseWriter, ctx context.Context, warning string) {
@@ -308,7 +316,7 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	if err := s.sync(ctx); err != nil {
 		log.Printf("xray sync: %v", err)
 	}
-	warning := s.live(ctx, func(set xray.Settings) error { return s.Xray.AddUser(ctx, set, *u) })
+	warning := s.live(ctx, func(set xray.Settings) ([]string, error) { return nil, s.Xray.AddUser(ctx, set, *u) })
 	s.respondUsers(w, ctx, warning)
 }
 
@@ -392,14 +400,15 @@ func (s *Server) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		if err := s.sync(ctx); err != nil {
 			log.Printf("xray sync: %v", err)
 		}
-		warning = s.live(ctx, func(set xray.Settings) error {
+		warning = s.live(ctx, func(set xray.Settings) ([]string, error) {
+			var ended []string
 			if before.Enabled {
-				// A restart has read the user as it is now from the config.
-				if restarted, err := s.Xray.RemoveUser(ctx, set, u.ID); err != nil || restarted {
-					return err
+				var err error
+				if ended, err = s.removeUser(ctx, set, u.ID); err != nil {
+					return nil, err
 				}
 			}
-			return s.Xray.AddUser(ctx, set, *u)
+			return ended, s.Xray.AddUser(ctx, set, *u)
 		})
 	}
 	s.respondUsers(w, ctx, warning)
@@ -436,10 +445,7 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	warning := ""
 	if u.Enabled {
-		warning = s.live(ctx, func(set xray.Settings) error {
-			_, err := s.Xray.RemoveUser(ctx, set, u.ID)
-			return err
-		})
+		warning = s.live(ctx, func(set xray.Settings) ([]string, error) { return s.removeUser(ctx, set, u.ID) })
 	}
 	s.respondUsers(w, ctx, warning)
 }

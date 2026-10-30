@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/auth"
 	"github.com/Stilltiger45/TigerSB-panel/internal/config"
@@ -66,6 +68,8 @@ func newTestServer(t *testing.T) *Server {
 	s.Mieru = singbox.MieruRuntime(dir)
 	s.Mieru.Image, s.Mieru.Binary, s.Mieru.Exec = "singbox:test", "/opt/mbox", noDocker
 	s.LocalIPs = func() ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.9")}, nil }
+	s.applyDelay = 0
+	s.slowWait = time.Millisecond
 	return s
 }
 
@@ -140,17 +144,52 @@ func TestLoginFlow(t *testing.T) {
 
 func TestWrongPasswordAndLockout(t *testing.T) {
 	s := newTestServer(t)
-	for i := 0; i < 5; i++ {
-		if w := login(t, s, "admin", "nope"); w.Code != http.StatusUnauthorized {
-			t.Fatalf("attempt %d: want 401, got %d", i, w.Code)
+	s.slowWait = time.Millisecond
+	from := func(remote, fwd, pass string) int {
+		r := httptest.NewRequest(http.MethodPost, "/"+secret+"/api/login", strings.NewReader(`{"username":"admin","password":"`+pass+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.RemoteAddr = remote
+		if fwd != "" {
+			r.Header.Set("X-Forwarded-For", fwd)
+		}
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Code == http.StatusTooManyRequests && w.Header().Get("Retry-After") == "" {
+			t.Fatal("429 without Retry-After")
+		}
+		return w.Code
+	}
+	// An attacker through Caddy: ten failures block that address only.
+	const caddy = "127.0.0.1:40000"
+	for i := 0; i < 10; i++ {
+		if c := from(caddy, "198.51.100.7", "nope"); c != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: want 401, got %d", i, c)
 		}
 	}
-	w := login(t, s, "admin", "very-secret-pass")
-	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
-		t.Fatalf("want 429 with Retry-After after 5 failures, got %d", w.Code)
+	if c := from(caddy, "198.51.100.7", "very-secret-pass"); c != http.StatusTooManyRequests {
+		t.Fatalf("blocked address: want 429, got %d", c)
 	}
-	if w := login(t, s, "nobody", "x"); w.Code != http.StatusUnauthorized {
-		t.Fatalf("unknown user: want 401, got %d", w.Code)
+	// The admin from another address gets in: the failures for "admin"
+	// only slow the attempts down.
+	if c := from(caddy, "203.0.113.20", "very-secret-pass"); c != http.StatusOK {
+		t.Fatalf("admin from another address: %d", c)
+	}
+	// Many addresses at once: still no lockout for the admin.
+	for i := 0; i < 21; i++ {
+		from(caddy, fmt.Sprintf("198.51.100.%d", 100+i), "nope")
+	}
+	if c := from(caddy, "203.0.113.21", "very-secret-pass"); c != http.StatusOK {
+		t.Fatalf("admin during a spread attack: %d", c)
+	}
+	// Through an SSH tunnel nothing is counted or blocked.
+	for i := 0; i < 15; i++ {
+		from("127.0.0.1:50000", "", "nope")
+	}
+	if c := from("127.0.0.1:50001", "", "very-secret-pass"); c != http.StatusOK {
+		t.Fatalf("SSH tunnel: %d", c)
+	}
+	if c := from(caddy, "203.0.113.22", "x"); c != http.StatusUnauthorized {
+		t.Fatalf("wrong password: want 401, got %d", c)
 	}
 }
 

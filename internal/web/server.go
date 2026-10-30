@@ -39,14 +39,18 @@ const (
 
 // Server is the panel HTTP handler.
 type Server struct {
-	cfg     *config.Config
-	store   *store.Store
-	assets  fs.FS
-	prefix  string
-	byUser  *auth.Limiter
-	global  *auth.Limiter
-	version string
-	now     func() time.Time
+	cfg    *config.Config
+	store  *store.Store
+	assets fs.FS
+	prefix string
+	// Login throttling, see handleLogin.
+	byIP     *auth.Limiter
+	byUser   *auth.Limiter
+	global   *auth.Limiter
+	slow     chan struct{}
+	slowWait time.Duration
+	version  string
+	now      func() time.Time
 
 	// Site is where the Caddyfile and maintenance page live.
 	Site site.Paths
@@ -72,6 +76,11 @@ type Server struct {
 	LocalIPs func() ([]net.IP, error)
 	// xrayMu keeps user and protocol changes in order.
 	xrayMu sync.Mutex
+	// pending are user changes that wait for sing-box and mbox (batch.go);
+	// applyDelay is ApplyDelay, and 0 in tests applies them at once.
+	pendMu     sync.Mutex
+	pending    batch
+	applyDelay time.Duration
 
 	// loaded receives the result of each background Caddy load in tests.
 	loaded chan error
@@ -83,14 +92,21 @@ type Server struct {
 // New builds the handler. assets holds login.html, app.html and static files.
 func New(cfg *config.Config, st *store.Store, assets fs.FS, version string) *Server {
 	return &Server{
-		cfg:     cfg,
-		store:   st,
-		assets:  assets,
-		prefix:  "/" + cfg.SecretPath,
-		byUser:  auth.NewLimiter(5, 15*time.Minute, 15*time.Minute),
-		global:  auth.NewLimiter(30, 15*time.Minute, 15*time.Minute),
-		version: version,
-		now:     time.Now,
+		cfg:    cfg,
+		store:  st,
+		assets: assets,
+		prefix: "/" + cfg.SecretPath,
+		byIP:   auth.NewLimiter(10, 15*time.Minute, 15*time.Minute),
+		byUser: auth.NewLimiter(5, 15*time.Minute, 15*time.Minute),
+		global: auth.NewLimiter(30, 15*time.Minute, 15*time.Minute),
+		slow:   make(chan struct{}, 2),
+
+		slowWait: 2 * time.Second,
+		version:  version,
+		now:      time.Now,
+		pending:  batch{ended: map[string]bool{}},
+
+		applyDelay: ApplyDelay,
 
 		Site:     site.DefaultPaths(filepath.Dir(cfg.DBPath)),
 		CertAddr: site.LocalTLS,
@@ -151,6 +167,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleUserAdd(w, r)
 	case rest == "/api/users/update":
 		s.handleUserUpdate(w, r)
+	case rest == "/api/users/apply":
+		s.handleUsersApply(w, r)
 	case rest == "/api/users/delete":
 		s.handleUserDelete(w, r)
 	case rest == "/api/users/device/delete":
@@ -231,15 +249,29 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "некорректный запрос"})
 		return
 	}
+	// Too many failures from one address block that address. Failures for
+	// a login or from everyone only slow attempts down: blocking them would
+	// let anyone who knows the secret path lock the admin out. Through an
+	// SSH tunnel (loopback, not through Caddy) nothing is blocked or slowed.
+	ip, tunnel := loginIP(r)
 	userKey := "u:" + strings.ToLower(req.Username)
-	for _, check := range []struct {
-		l   *auth.Limiter
-		key string
-	}{{s.byUser, userKey}, {s.global, "all"}} {
-		if ok, wait := check.l.Allowed(check.key); !ok {
+	if !tunnel {
+		if ok, wait := s.byIP.Allowed(ip); !ok {
 			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "слишком много попыток, попробуйте позже"})
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "слишком много попыток с вашего адреса, попробуйте позже"})
 			return
+		}
+		okUser, _ := s.byUser.Allowed(userKey)
+		okAll, _ := s.global.Allowed("all")
+		if !okUser || !okAll {
+			// A few attempts at a time, each slower.
+			select {
+			case s.slow <- struct{}{}:
+				defer func() { <-s.slow }()
+			case <-r.Context().Done():
+				return
+			}
+			time.Sleep(s.slowWait)
 		}
 	}
 
@@ -256,11 +288,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Verify even for unknown users so timing does not reveal which logins exist.
 	ok, verr := auth.VerifyPassword(hash, req.Password)
 	if err != nil || verr != nil || !ok {
-		s.byUser.Fail(userKey)
-		s.global.Fail("all")
+		if !tunnel {
+			s.byIP.Fail(ip)
+			s.byUser.Fail(userKey)
+			s.global.Fail("all")
+		}
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "неверный логин или пароль"})
 		return
 	}
+	s.byIP.Reset(ip)
 	s.byUser.Reset(userKey)
 
 	token, tokenHash, err := auth.NewToken()
@@ -331,6 +367,25 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"open":     open && url != "",
 		"url":      url,
 	})
+}
+
+// loginIP is the address a login comes from. Through Caddy that is the one
+// Caddy saw (it replaces X-Forwarded-For the client sent); tunnel is a
+// request to the panel's loopback port itself, as through an SSH tunnel.
+func loginIP(r *http.Request) (ip string, tunnel bool) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr, false
+	}
+	if addr := net.ParseIP(host); addr == nil || !addr.IsLoopback() {
+		return host, false
+	}
+	fwd := r.Header.Get("X-Forwarded-For")
+	if fwd == "" {
+		return host, true
+	}
+	parts := strings.Split(fwd, ",")
+	return strings.TrimSpace(parts[len(parts)-1]), false
 }
 
 // viaHTTPS reports a request that came through Caddy on https://<domain>/.

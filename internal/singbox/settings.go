@@ -190,6 +190,15 @@ func (s Settings) derive(label string) string {
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))[:24]
 }
 
+// Placeholder is the user NaïveProxy and Mieru get when nobody else is
+// served: both refuse a config without users ("missing users", "users is
+// empty"), and then sing-box would keep its old config with the deleted
+// users in it, and mbox would not start. Its password is derived from the
+// secret, which never leaves the server, so no one can use it.
+func (s Settings) Placeholder() (name, password string) {
+	return "placeholder", s.derive("placeholder")
+}
+
 // Password is a user's TUIC password: an HMAC of the UUID, so it changes
 // together with the UUID when the admin issues new links.
 func (s Settings) Password(uuid string) string { return s.derive("tuic:" + uuid) }

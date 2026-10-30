@@ -47,9 +47,13 @@ func cmdMonitor(args []string) error {
 			fmt.Fprintln(os.Stderr, "трафик пользователей:", err)
 		}
 	}
-	// A renewed certificate reaches TUIC within five minutes.
+	// A renewed certificate reaches TUIC within five minutes, and so do
+	// user changes the panel did not get to apply (see web.ApplyDelay).
 	if err := e.singbox().Sync(ctx, e.st, e.set.Domain, true); err != nil {
 		fmt.Fprintln(os.Stderr, "sing-box:", err)
+	}
+	if err := e.mieru().Sync(ctx, e.st, e.set.Domain, true); err != nil {
+		fmt.Fprintln(os.Stderr, "mbox:", err)
 	}
 	if c, _ := health.LastCheck(ctx, e.st); c == nil || now.Sub(c.Checked) > checkEvery {
 		c := update.CheckGitHub(ctx, http.DefaultClient, version, now)

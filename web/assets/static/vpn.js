@@ -87,8 +87,41 @@ function userState(u) {
   return ["off", `устройств: ${u.device_list.length} из ${u.devices}`];
 }
 
+// renderPending counts down to the batch of changes for sing-box and mbox
+// (see ApplyDelay) and reloads the list when it has gone in.
+let pendingTimer = null;
+function renderPending(sec) {
+  clearInterval(pendingTimer);
+  $("users-pending").hidden = !sec;
+  if (!sec) return;
+  let left = sec;
+  const show = () => ($("users-pending-text").textContent =
+    `Изменения уже работают в XHTTP и gRPC. TUIC, Hysteria 2, NaïveProxy и Mieru получат их через ${left} с, все правки разом: так соединения остальных пользователей прервутся один раз, а не при каждой правке.`);
+  show();
+  pendingTimer = setInterval(() => {
+    left--;
+    if (left > 0) return show();
+    clearInterval(pendingTimer);
+    setTimeout(loadUsers, 2000);
+  }, 1000);
+}
+
+$("users-apply").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  try {
+    const d = await api("api/users/apply", {});
+    renderUsers(d);
+    notice("users-msg", d.warning || "Изменения применены.", !!d.warning);
+  } catch (err) {
+    notice("users-msg", err.message, true);
+  } finally {
+    e.target.disabled = false;
+  }
+});
+
 function renderUsers(d) {
   usersData = d;
+  renderPending(d.pending);
   protoPills($("users-protocols"), d.protocols);
   unitPill($("users-sub"), "Подписки", d.sub);
   if (d.warning) notice("users-msg", d.warning, true);
