@@ -28,7 +28,9 @@ type fakeXray struct {
 	stdin   []string
 	online  string
 	traffic string
-	test    error // what `xray run -test` says
+	// sessions are the open connections of users, by email.
+	sessions map[string]int
+	test     error // what `xray run -test` says
 }
 
 func (f *fakeXray) exec(_ context.Context, stdin []byte, name string, args ...string) (string, error) {
@@ -55,6 +57,12 @@ func (f *fakeXray) exec(_ context.Context, stdin []byte, name string, args ...st
 		return "Added " + string(rune('0'+n)) + " user(s) in total.", nil
 	case strings.Contains(line, " rmu "):
 		return "Removed 1 user(s) in total.", nil
+	case strings.Contains(line, " statsonline "):
+		email := args[len(args)-1]
+		if f.sessions[email] == 0 {
+			return "failed to get stats: rpc error: code = NotFound desc = user>>>" + email + ">>>online not found.", errors.New("exit 1")
+		}
+		return fmt.Sprintf(`{"stat":{"name":"user>>>%s>>>online","value":%d}}`, email, f.sessions[email]), nil
 	case strings.Contains(line, "statsonlineiplist"):
 		return f.online, nil
 	case strings.Contains(line, "statsquery"):

@@ -127,12 +127,14 @@ func RenderMieru(s Settings, users []store.User) ([]byte, error) {
 				list = append(list, obj{"name": xray.Name(u), "password": s.MieruPassword(u.UUID)})
 			}
 		}
-		for port := m.PortFrom; port <= m.PortTo; port++ {
-			inbounds = append(inbounds, obj{
-				"type": "mieru", "tag": MieruTag + "-" + strconv.Itoa(port), "listen": "::", "listen_port": port,
-				"transport": m.Transport,
-				"users":     list,
-			})
+		for _, tr := range m.Transports() {
+			for port := m.PortFrom; port <= m.PortTo; port++ {
+				inbounds = append(inbounds, obj{
+					"type": "mieru", "tag": MieruTag + "-" + strings.ToLower(tr) + "-" + strconv.Itoa(port), "listen": "::", "listen_port": port,
+					"transport": tr,
+					"users":     list,
+				})
+			}
 		}
 	}
 	return marshal(inbounds)
@@ -296,9 +298,10 @@ func NaiveLinks(s Settings, address, domain string, haveCert bool, u store.User)
 // IsNaiveQUIC tells a naive+quic:// link.
 func IsNaiveQUIC(l core.Link) bool { return strings.HasPrefix(l.URL, "naive+quic://") }
 
-// MieruLinks returns the mierus:// link of a user when Mieru is on, in the
-// form "mieru export config simple" writes. The address may be an IP: Mieru
-// has no certificate.
+// MieruLinks returns the mierus:// links of a user when Mieru is on, in the
+// form "mieru export config simple" writes: one link, or with both
+// transports one for TCP and one for UDP, so the app picks the one that
+// works on its network. The address may be an IP: Mieru has no certificate.
 func MieruLinks(s Settings, address string, u store.User) []core.Link {
 	m := s.Mieru
 	if !m.Enabled || address == "" {
@@ -312,8 +315,20 @@ func MieruLinks(s Settings, address string, u store.User) []core.Link {
 	if m.PortTo > m.PortFrom {
 		ports += "-" + strconv.Itoa(m.PortTo)
 	}
-	title := u.Name + " · Mieru"
-	link := "mierus://" + url.QueryEscape(xray.Name(u)) + ":" + url.QueryEscape(s.MieruPassword(u.UUID)) + "@" + host +
-		"?profile=TigerSB&port=" + ports + "&protocol=" + m.Transport + "#" + url.PathEscape(title)
-	return []core.Link{{Protocol: MieruTag, Title: title, URL: link}}
+	var out []core.Link
+	for _, tr := range m.Transports() {
+		title := u.Name + " · Mieru"
+		if m.Transport == MieruBoth && tr == MieruUDP {
+			title += " UDP"
+		}
+		link := "mierus://" + url.QueryEscape(xray.Name(u)) + ":" + url.QueryEscape(s.MieruPassword(u.UUID)) + "@" + host +
+			"?profile=TigerSB&port=" + ports + "&protocol=" + tr + "#" + url.PathEscape(title)
+		out = append(out, core.Link{Protocol: MieruTag, Title: title, URL: link})
+	}
+	return out
+}
+
+// IsMieruUDP tells a mierus:// link over UDP.
+func IsMieruUDP(l core.Link) bool {
+	return strings.HasPrefix(l.URL, "mierus://") && strings.Contains(l.URL, "&protocol="+MieruUDP)
 }

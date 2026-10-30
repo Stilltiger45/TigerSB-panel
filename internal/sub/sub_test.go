@@ -264,4 +264,22 @@ func TestSingboxInSubscriptions(t *testing.T) {
 	if q := p.Exits[0].Transports[5]; q.ID != "naive-quic" || q.Prio != 55 || !strings.Contains(string(q.Xray), `"quic":true`) {
 		t.Fatalf("naive QUIC: %+v %s", q, q.Xray)
 	}
+
+	// Mieru on TCP and UDP: two links, two transports.
+	sb.Mieru.Transport = singbox.MieruBoth
+	singbox.Save(context.Background(), st, sb)
+	w = get(h, http.MethodGet, "/sub/"+u.SubToken, "Hiddify/2.0", "hw1")
+	raw, _ = base64.StdEncoding.DecodeString(w.Body.String())
+	lines = strings.Split(string(raw), "\n")
+	if len(lines) != 8 || !strings.Contains(lines[6], "&protocol=TCP#") || !strings.Contains(lines[7], "&protocol=UDP#") {
+		t.Fatalf("links: %q", lines)
+	}
+	w = get(h, http.MethodGet, "/sub/"+u.SubToken, "TigerSB-android/0.1", "hw1")
+	if p, _, err = profile.Open(w.Body.Bytes(), pinned); err != nil || len(p.Exits[0].Transports) != 8 {
+		t.Fatalf("%v: %+v", err, p)
+	}
+	m, mu := p.Exits[0].Transports[6], p.Exits[0].Transports[7]
+	if m.ID != "mieru" || m.Prio != 60 || mu.ID != "mieru-udp" || mu.Prio != 65 || !strings.Contains(string(mu.Xray), `"protocol":"UDP"`) {
+		t.Fatalf("mieru: %+v %+v", m, mu)
+	}
 }

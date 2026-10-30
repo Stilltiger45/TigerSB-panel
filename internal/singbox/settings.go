@@ -98,8 +98,32 @@ type Mieru struct {
 	// their connections over them.
 	PortFrom int `json:"port_from"`
 	PortTo   int `json:"port_to"`
-	// Transport is TCP or UDP.
+	// Transport is TCP, UDP or both: then mbox listens on each port over
+	// both, and a user gets a link for each.
 	Transport string `json:"transport"`
+}
+
+// Mieru transports.
+const (
+	MieruTCP  = "TCP"
+	MieruUDP  = "UDP"
+	MieruBoth = "BOTH"
+)
+
+func (m Mieru) TCP() bool { return m.Transport != MieruUDP }
+func (m Mieru) UDP() bool { return m.Transport != MieruTCP }
+
+// Transports lists what mbox listens on: TCP, UDP or both.
+func (m Mieru) Transports() []string {
+	if m.Transport == MieruBoth {
+		return []string{MieruTCP, MieruUDP}
+	}
+	return []string{m.Transport}
+}
+
+// Label is the transport for messages: "tcp", "udp" or "tcp и udp".
+func (m Mieru) Label() string {
+	return strings.ToLower(strings.Join(m.Transports(), " и "))
 }
 
 // Settings are the sing-box protocols.
@@ -119,7 +143,7 @@ var (
 	CongestionControls = []string{"bbr", "cubic", "new_reno"}
 	UDPRelayModes      = []string{"native", "quic"}
 	BBRProfiles        = []string{"standard", "conservative", "aggressive"}
-	MieruTransports    = []string{"TCP", "UDP"}
+	MieruTransports    = []string{MieruTCP, MieruUDP, MieruBoth}
 	NaiveNetworks      = []string{NaiveTCP, NaiveQUIC, NaiveBoth}
 )
 
@@ -265,9 +289,9 @@ func (s *Settings) Validate() error {
 		return fmt.Errorf("Mieru: не больше %d портов в диапазоне", maxMieruPorts)
 	}
 	if !slices.Contains(MieruTransports, m.Transport) {
-		return fmt.Errorf("Mieru: транспорт %q, можно TCP или UDP", m.Transport)
+		return fmt.Errorf("Mieru: транспорт %q, можно TCP, UDP или оба", m.Transport)
 	}
-	if m.Enabled && m.Transport == "UDP" {
+	if m.Enabled && m.UDP() {
 		if t.Enabled && s.MieruHas(t.Port) {
 			return fmt.Errorf("Mieru по UDP и TUIC: порт %d в обоих, им нужны разные порты", t.Port)
 		}
@@ -278,7 +302,7 @@ func (s *Settings) Validate() error {
 			return fmt.Errorf("Mieru и NaïveProxy оба работают по UDP: порт %d в обоих, им нужны разные порты", n.Port)
 		}
 	}
-	if m.Enabled && m.Transport == "TCP" && n.Enabled && n.TCP() && s.MieruHas(n.Port) {
+	if m.Enabled && m.TCP() && n.Enabled && n.TCP() && s.MieruHas(n.Port) {
 		return fmt.Errorf("Mieru и NaïveProxy оба работают по TCP: порт %d в обоих, им нужны разные порты", n.Port)
 	}
 	if len(s.Secret) < 32 {

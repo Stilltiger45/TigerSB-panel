@@ -724,7 +724,9 @@ function naiveCard() {
   return card("naive", "NaïveProxy", "sing-box", p, row, []);
 }
 
-// mieruCard is Mieru: a port range and TCP or UDP, served by mbox.
+const MIERU_TRANSPORTS = { TCP: "TCP", UDP: "UDP", BOTH: "TCP и UDP" };
+
+// mieruCard is Mieru: a port range and TCP, UDP or both, served by mbox.
 function mieruCard() {
   const p = protoData.singbox.mieru;
   const hint = el("span", { class: "hint", text: mieruPortText(p) });
@@ -737,7 +739,7 @@ function mieruCard() {
     });
     return input;
   };
-  const transport = el("select", { "aria-label": "Транспорт" }, ...protoData.mieru_transports.map((t) => el("option", { value: t, text: t })));
+  const transport = el("select", { "aria-label": "Транспорт" }, ...protoData.mieru_transports.map((t) => el("option", { value: t, text: MIERU_TRANSPORTS[t] || t })));
   transport.value = p.transport;
   transport.addEventListener("change", () => {
     p.transport = transport.value;
@@ -755,8 +757,9 @@ function mieruCard() {
 function mieruPortText(p) {
   if (p.port_from < 1024 || p.port_to > 65535 || p.port_from > p.port_to) return "Диапазон от 1024 до 65535, первый порт не больше последнего.";
   if (p.port_to - p.port_from >= 100) return "Не больше 100 портов.";
-  const proto = p.transport.toLowerCase();
-  return `${p.port_to - p.port_from + 1} портов по ${p.transport}. Откройте ${p.port_from}-${p.port_to}/${proto} в файрволе хостинга, если он там есть.`;
+  const range = `${p.port_from}-${p.port_to}`;
+  if (p.transport === "BOTH") return `${p.port_to - p.port_from + 1} портов по TCP и UDP, у пользователя две ссылки: приложение возьмёт ту, что работает в его сети. Откройте ${range}/tcp и ${range}/udp в файрволе хостинга, если он там есть.`;
+  return `${p.port_to - p.port_from + 1} портов по ${p.transport}. Откройте ${range}/${p.transport.toLowerCase()} в файрволе хостинга, если он там есть.`;
 }
 
 function naivePortText(p) {

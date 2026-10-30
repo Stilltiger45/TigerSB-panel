@@ -394,7 +394,8 @@ func (s *Server) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		warning = s.live(ctx, func(set xray.Settings) error {
 			if before.Enabled {
-				if err := s.Xray.RemoveUser(ctx, set, u.ID); err != nil {
+				// A restart has read the user as it is now from the config.
+				if restarted, err := s.Xray.RemoveUser(ctx, set, u.ID); err != nil || restarted {
 					return err
 				}
 			}
@@ -435,7 +436,10 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	warning := ""
 	if u.Enabled {
-		warning = s.live(ctx, func(set xray.Settings) error { return s.Xray.RemoveUser(ctx, set, u.ID) })
+		warning = s.live(ctx, func(set xray.Settings) error {
+			_, err := s.Xray.RemoveUser(ctx, set, u.ID)
+			return err
+		})
 	}
 	s.respondUsers(w, ctx, warning)
 }

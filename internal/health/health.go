@@ -299,15 +299,17 @@ func checkMieru(ctx context.Context, e Env) Result {
 		r.State, r.Detail = Off, "Работает, Mieru выключен."
 		return r
 	}
-	listening := e.ListeningUDP
-	if m.Transport == "TCP" {
-		listening = e.Listening
+	for _, tr := range m.Transports() {
+		listening := e.ListeningUDP
+		if tr == singbox.MieruTCP {
+			listening = e.Listening
+		}
+		if listening != nil && !listening(m.PortFrom) {
+			r.State, r.Detail = Fail, fmt.Sprintf("Mieru не слушает %s %d. Подробности: journalctl -u %s", tr, m.PortFrom, singbox.MieruUnit)
+			return r
+		}
 	}
-	if listening != nil && !listening(m.PortFrom) {
-		r.State, r.Detail = Fail, fmt.Sprintf("Mieru не слушает %s %d. Подробности: journalctl -u %s", m.Transport, m.PortFrom, singbox.MieruUnit)
-		return r
-	}
-	r.State, r.Detail = OK, fmt.Sprintf("Работает: порты %d-%d/%s. Они должны быть открыты в файрволе и у хостера. Mieru нужно точное время на сервере и у клиентов.", m.PortFrom, m.PortTo, strings.ToLower(m.Transport))
+	r.State, r.Detail = OK, fmt.Sprintf("Работает: порты %d-%d/%s. Они должны быть открыты в файрволе и у хостера. Mieru нужно точное время на сервере и у клиентов.", m.PortFrom, m.PortTo, m.Label())
 	return r
 }
 

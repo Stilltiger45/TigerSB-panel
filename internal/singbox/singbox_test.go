@@ -490,3 +490,74 @@ func TestRenderNaive(t *testing.T) {
 		t.Fatal("NaïveProxy on TCP 443 must be refused")
 	}
 }
+
+func TestRenderMieru(t *testing.T) {
+	s := defaults(t)
+	type inbound struct {
+		Tag, Transport string
+		ListenPort     int `json:"listen_port"`
+		Users          []struct{ Name, Password string }
+	}
+	render := func() []inbound {
+		t.Helper()
+		raw, err := RenderMieru(s, users())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var conf struct{ Inbounds []inbound }
+		if err := json.Unmarshal(raw, &conf); err != nil {
+			t.Fatal(err)
+		}
+		return conf.Inbounds
+	}
+	// TCP: an inbound on each port of 2012-2022 with the enabled user only.
+	in := render()
+	if len(in) != 11 || in[0].Tag != "mieru-tcp-2012" || in[0].Transport != "TCP" || in[10].ListenPort != 2022 {
+		t.Fatalf("inbounds: %+v", in)
+	}
+	if len(in[0].Users) != 1 || in[0].Users[0].Name != "u1" || in[0].Users[0].Password != s.MieruPassword(users()[0].UUID) {
+		t.Fatalf("users: %+v", in[0].Users)
+	}
+	if l := MieruLinks(s, "203.0.113.5", users()[0]); len(l) != 1 || !strings.HasSuffix(l[0].Title, "· Mieru") || IsMieruUDP(l[0]) ||
+		!strings.Contains(l[0].URL, "@203.0.113.5?profile=TigerSB&port=2012-2022&protocol=TCP#") {
+		t.Fatalf("links: %+v", l)
+	}
+
+	// Both: TCP and UDP on every port, and a link for each.
+	s.Mieru.Transport = MieruBoth
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	in = render()
+	if len(in) != 22 || in[11].Tag != "mieru-udp-2012" || in[11].Transport != "UDP" || in[11].ListenPort != 2012 || len(in[11].Users) != 1 {
+		t.Fatalf("inbounds: %+v", in)
+	}
+	links := MieruLinks(s, "203.0.113.5", users()[0])
+	if len(links) != 2 || IsMieruUDP(links[0]) || !IsMieruUDP(links[1]) || !strings.HasSuffix(links[1].Title, "· Mieru UDP") {
+		t.Fatalf("links: %+v", links)
+	}
+	for i, l := range links {
+		out, _, err := profile.ParseLink(l.URL)
+		if err != nil || !strings.Contains(string(out), `"protocol":"`+[]string{"TCP", "UDP"}[i]+`"`) {
+			t.Fatalf("the app does not read %s: %v %s", l.URL, err, out)
+		}
+	}
+	if s.Mieru.Label() != "tcp и udp" {
+		t.Fatalf("label %q", s.Mieru.Label())
+	}
+
+	// Each side of both must not share ports: UDP with TUIC, TCP with NaïveProxy.
+	s.TUIC.Port = 2015
+	if err := s.Validate(); err == nil {
+		t.Fatal("Mieru UDP and TUIC on one port must be refused")
+	}
+	s.TUIC.Port = 443
+	s.Naive.Port = 2016
+	if err := s.Validate(); err == nil {
+		t.Fatal("Mieru TCP and NaïveProxy on one port must be refused")
+	}
+	s.Naive.Port, s.Mieru.Transport = 2443, "SCTP"
+	if err := s.Validate(); err == nil {
+		t.Fatal("unknown transport must be refused")
+	}
+}

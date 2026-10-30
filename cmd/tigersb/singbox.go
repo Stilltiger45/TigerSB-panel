@@ -100,7 +100,7 @@ func cmdSingbox(cmd string, args []string) error {
 			if !m.Enabled {
 				fmt.Println("Mieru: выключен")
 			} else {
-				fmt.Printf("Mieru: порты %d-%d/%s\n", m.PortFrom, m.PortTo, strings.ToLower(m.Transport))
+				fmt.Printf("Mieru: порты %d-%d/%s\n", m.PortFrom, m.PortTo, m.Label())
 			}
 			return nil
 		}
