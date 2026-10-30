@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/core"
@@ -47,9 +45,8 @@ func cmdSingbox(cmd string, args []string) error {
 	ctx := context.Background()
 	switch args[0] {
 	case "run":
-		err := rt.Sync(ctx, e.st, e.set.Domain, false)
-		e.st.Close()
-		if err != nil {
+		defer e.st.Close()
+		if err := rt.Sync(ctx, e.st, e.set.Domain, false); err != nil {
 			return err
 		}
 		docker, err := exec.LookPath("docker")
@@ -57,8 +54,8 @@ func cmdSingbox(cmd string, args []string) error {
 			return core.ErrNoDocker
 		}
 		rt.Remove(ctx)
-		// systemd watches docker itself, so a crash of the core restarts the unit.
-		return syscall.Exec(docker, append([]string{"docker"}, rt.RunArgs()...), os.Environ())
+		// Run returns when the core does, so a crash restarts the unit.
+		return rt.Run(e.st, docker)
 	case "stop":
 		e.st.Close()
 		_, err := rt.Exec(ctx, nil, "docker", "stop", "-t", "5", rt.Container)

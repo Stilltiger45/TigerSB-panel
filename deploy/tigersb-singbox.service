@@ -8,8 +8,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Writes the config and the certificate copy from the database and Caddy's
-# storage, then becomes `docker run` of the pinned sing-box image with the
-# host network.
+# storage, then runs `docker run` of the pinned sing-box image with the
+# host network and counts the users' traffic until it exits.
 ExecStart=/usr/local/bin/tigersb singbox run --config /etc/tigersb/config.json
 ExecStop=/usr/local/bin/tigersb singbox stop --config /etc/tigersb/config.json
 # sing-box rereads its config and certificate on SIGHUP.

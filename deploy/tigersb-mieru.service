@@ -7,9 +7,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Writes the config from the database, then becomes `docker run` of the
+# Writes the config from the database, then runs `docker run` of the
 # pinned sing-box image with the host network, running mbox (the sing-box
-# build of Mieru's author, /usr/local/lib/tigersb/mbox) instead of sing-box.
+# build of Mieru's author, /usr/local/lib/tigersb/mbox) instead of sing-box,
+# and counts the users' traffic until it exits.
 ExecStart=/usr/local/bin/tigersb mieru run --config /etc/tigersb/config.json
 ExecStop=/usr/local/bin/tigersb mieru stop --config /etc/tigersb/config.json
 # No reload: mbox keeps Mieru's old users over a SIGHUP, so the panel
