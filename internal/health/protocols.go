@@ -102,10 +102,16 @@ func Protocols(ctx context.Context, e Env) ([]Result, error) {
 		np, nl = append(np, port{n: n.Port, udp: true}), append(nl, port{n: n.Port, udp: true})
 	}
 	m := sb.Mieru
-	mp := port{n: m.PortFrom, udp: m.Transport == "UDP"}
-	mieru := one(singbox.MieruTag, "Mieru", m.Enabled, singbox.MieruUnit, false, []port{mp}, []port{mp})
+	var mp []port
+	if m.TCP() {
+		mp = append(mp, port{n: m.PortFrom})
+	}
+	if m.UDP() {
+		mp = append(mp, port{n: m.PortFrom, udp: true})
+	}
+	mieru := one(singbox.MieruTag, "Mieru", m.Enabled, singbox.MieruUnit, false, mp, mp)
 	if mieru.State == OK && m.PortTo > m.PortFrom {
-		mieru.Detail = fmt.Sprintf("Работает: %d-%d/%s.", m.PortFrom, m.PortTo, strings.ToLower(m.Transport))
+		mieru.Detail = fmt.Sprintf("Работает: %d-%d/%s.", m.PortFrom, m.PortTo, m.Label())
 	}
 	return []Result{
 		one(xray.XHTTPTag, "XHTTP", xs.XHTTP.Enabled, xray.Unit, false, xp, xl),

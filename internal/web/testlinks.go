@@ -30,7 +30,8 @@ func (s *Server) testLinks(ctx context.Context, set xray.Settings, sb singbox.Se
 		links = append(links, singbox.NaiveLinks(sb, addr, domain, s.Singbox.HaveCert(), u)...)
 		links = append(links, singbox.MieruLinks(sb, addr, u)...)
 		out[u.Only] = ""
-		// NaïveProxy on TCP and QUIC has two links; the TCP one comes first.
+		// NaïveProxy on TCP and QUIC and Mieru on TCP and UDP have two links;
+		// the TCP one comes first.
 		for _, l := range links {
 			if l.Protocol == u.Only && out[u.Only] == "" {
 				out[u.Only] = l.URL
@@ -108,10 +109,11 @@ func (s *Server) applyTest(ctx context.Context, protocol, uuid string) string {
 		return ""
 	}
 	set, err := xray.Load(ctx, s.store)
+	restarted := false
 	if err == nil {
-		err = s.Xray.RemoveTest(ctx, set, protocol)
+		restarted, err = s.Xray.RemoveTest(ctx, set, protocol)
 	}
-	if err == nil && uuid != "" {
+	if err == nil && uuid != "" && !restarted {
 		err = s.Xray.AddUser(ctx, set, store.User{UUID: uuid, Enabled: true, Only: protocol})
 	}
 	if err != nil {

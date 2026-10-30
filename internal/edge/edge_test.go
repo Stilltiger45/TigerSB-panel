@@ -173,3 +173,72 @@ func TestForwards(t *testing.T) {
 		t.Fatal("port still open after its forward was removed")
 	}
 }
+
+// TestForwardsNewGeneration: a new generation of the backend closes the
+// connections to the old one; the same generation leaves them be.
+func TestForwardsNewGeneration(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				io.Copy(c, c)
+			}()
+		}
+	}()
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := free.Addr().String()
+	free.Close()
+	path := filepath.Join(t.TempDir(), "ports.json")
+	srv := &Server{Path: filepath.Join(t.TempDir(), "routes.json"), Forwards: path}
+	defer srv.CloseForwards()
+	write := func(gen string) {
+		t.Helper()
+		if err := WriteForwards(path, []Forward{{Listen: addr, Backend: Backend{Addr: ln.Addr().String()}, Gen: gen}}); err != nil {
+			t.Fatal(err)
+		}
+		srv.Reload()
+	}
+	write("a")
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	echo := func() error {
+		c.SetDeadline(time.Now().Add(time.Second))
+		if _, err := c.Write([]byte("ping")); err != nil {
+			return err
+		}
+		b := make([]byte, 4)
+		_, err := io.ReadFull(c, b)
+		return err
+	}
+	if err := echo(); err != nil {
+		t.Fatal(err)
+	}
+	write("a")
+	if err := echo(); err != nil {
+		t.Fatalf("same generation closed the connection: %v", err)
+	}
+	write("b")
+	if err := echo(); err == nil {
+		t.Fatal("a connection to the old generation stays open")
+	}
+	c2, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2.Close()
+}

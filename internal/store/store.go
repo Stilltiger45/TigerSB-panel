@@ -79,6 +79,12 @@ var migrations = []string{
 		last_seen  INTEGER NOT NULL,
 		UNIQUE (user_id, hwid)
 	)`,
+	// The last user ID given out. SQLite gives a deleted last user's ID to
+	// the next one, and with it the name the cores know the user by
+	// (u<id>): Xray's counters and open connections of the deleted user
+	// would show up as the new one's.
+	`CREATE TABLE user_ids (last INTEGER NOT NULL)`,
+	`INSERT INTO user_ids SELECT coalesce(max(id), 0) FROM users`,
 }
 
 // Open opens (creating if needed) the database at path and applies migrations.

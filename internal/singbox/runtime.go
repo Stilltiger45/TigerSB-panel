@@ -3,7 +3,9 @@ package singbox
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -319,14 +321,30 @@ func (r *Runtime) Sync(ctx context.Context, st *store.Store, domain string, relo
 	if err != nil {
 		return err
 	}
-	// The edge opens and closes its ports by itself within seconds.
+	var reloadErr error
+	if reload && (changedCert || changedConf) {
+		reloadErr = r.Reload(ctx)
+	}
+	// The edge opens and closes its ports by itself within seconds, and
+	// closes the connections that sing-box kept over the reload.
 	if r.Forwards != "" {
-		if err := edge.WriteForwards(r.Forwards, Forwards(s, domain, r.HaveCert())); err != nil {
+		f := Forwards(s, domain, r.HaveCert())
+		for i := range f {
+			f[i].Gen = r.generation(conf)
+		}
+		if err := edge.WriteForwards(r.Forwards, f); err != nil {
 			return err
 		}
 	}
-	if reload && (changedCert || changedConf) {
-		return r.Reload(ctx)
+	return reloadErr
+}
+
+// generation names the config and certificate sing-box serves.
+func (r *Runtime) generation(conf []byte) string {
+	h := sha256.New()
+	h.Write(conf)
+	if b, err := os.ReadFile(filepath.Join(r.Dir, certFile)); err == nil {
+		h.Write(b)
 	}
-	return nil
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }

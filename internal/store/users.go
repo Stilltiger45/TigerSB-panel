@@ -50,16 +50,28 @@ func uniqueErr(err error) error {
 	return err
 }
 
-// AddUser creates a user and fills its ID.
+// AddUser creates a user and fills its ID. IDs are never given out twice.
 func (s *Store) AddUser(ctx context.Context, u *User) error {
-	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (name, uuid, devices, enabled, created_at, sub_token) VALUES (?, ?, ?, ?, ?, ?)`,
-		u.Name, u.UUID, u.Devices, u.Enabled, u.Created.Unix(), u.SubToken)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id int64
+	if err := tx.QueryRowContext(ctx, `
+		UPDATE user_ids SET last = max(last, (SELECT coalesce(max(id), 0) FROM users)) + 1 RETURNING last`).Scan(&id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO users (id, name, uuid, devices, enabled, created_at, sub_token) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, u.Name, u.UUID, u.Devices, u.Enabled, u.Created.Unix(), u.SubToken); err != nil {
 		return uniqueErr(err)
 	}
-	u.ID, err = res.LastInsertId()
-	return err
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	u.ID = id
+	return nil
 }
 
 // Users returns every user, oldest first.

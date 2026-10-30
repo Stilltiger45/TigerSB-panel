@@ -134,6 +134,10 @@ func Profile(priv ed25519.PrivateKey, links []core.Link, domain string, u store.
 			// NaïveProxy on TCP and QUIC are two transports of the exit.
 			id, p = singbox.NaiveTag+"-quic", p+5
 		}
+		if singbox.IsMieruUDP(l) {
+			// So are Mieru on TCP and UDP.
+			id, p = singbox.MieruTag+"-udp", p+5
+		}
 		exit.Transports = append(exit.Transports, profile.Transport{ID: id, Prio: p, Name: l.Title, Xray: out})
 	}
 	if len(exit.Transports) == 0 {

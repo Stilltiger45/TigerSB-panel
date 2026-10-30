@@ -268,9 +268,14 @@ func TestMieru(t *testing.T) {
 		}
 	}
 	check(OK, "running")
+	s, _ := singbox.Load(ctx, w.env.Store)
+	s.Mieru.Transport = singbox.MieruBoth
+	singbox.Save(ctx, w.env.Store, s)
+	check(Fail, "UDP 2012 not listening")
+	w.udp[2012] = true
+	check(OK, "TCP and UDP")
 	w.ports[2012] = false
 	check(Fail, "TCP 2012 not listening")
-	s, _ := singbox.Load(ctx, w.env.Store)
 	s.Mieru.Enabled = false
 	singbox.Save(ctx, w.env.Store, s)
 	check(Off, "off")
@@ -316,6 +321,11 @@ func TestProtocols(t *testing.T) {
 	check(map[string]string{"naive": Fail}, "QUIC not listening")
 	w.udp[2443] = true
 	check(map[string]string{"naive": OK}, "TCP and QUIC")
+	s.Mieru.Transport = singbox.MieruBoth
+	singbox.Save(ctx, w.env.Store, s)
+	check(map[string]string{"mieru": Fail}, "Mieru UDP not listening")
+	w.udp[2012] = true
+	check(map[string]string{"mieru": OK}, "Mieru on TCP and UDP")
 
 	w.cert = false
 	check(map[string]string{"tuic": Warn, "hysteria2": Warn, "naive": Warn, "mieru": OK, "xhttp": OK}, "no certificate")

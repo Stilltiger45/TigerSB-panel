@@ -290,7 +290,7 @@ func tcpClash(set xray.Settings, sb singbox.Settings, panelPort int) error {
 	if n := sb.Naive; n.Enabled && n.TCP() {
 		users = append(users, user{"NaïveProxy", func(p int) bool { return p == n.Port }})
 	}
-	if m := sb.Mieru; m.Enabled && m.Transport == "TCP" {
+	if m := sb.Mieru; m.Enabled && m.TCP() {
 		users = append(users, user{"Mieru", sb.MieruHas})
 	}
 	for _, u := range users {
