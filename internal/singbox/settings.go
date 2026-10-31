@@ -190,6 +190,10 @@ func (s Settings) derive(label string) string {
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))[:24]
 }
 
+// ClashSecret guards the Clash API, which lists every connection with its
+// address and destination.
+func (s Settings) ClashSecret() string { return s.derive("clash-api") }
+
 // Placeholder is the user NaïveProxy and Mieru get when nobody else is
 // served: both refuse a config without users ("missing users", "users is
 // empty"), and then sing-box would keep its old config with the deleted

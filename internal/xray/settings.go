@@ -305,6 +305,8 @@ func Reserved(panelPort int) map[int]string {
 		TLSPort:      "Caddy",
 		10085:        "API Xray",
 		site.SubPort: "подписки",
+		10087:        "статистика sing-box",
+		10088:        "статистика Mieru",
 		GRPCInner:    "внутренний порт gRPC",
 		XHTTPInner:   "внутренний порт XHTTP",
 		NaiveInner:   "внутренний порт NaïveProxy",

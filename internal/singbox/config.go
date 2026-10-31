@@ -93,24 +93,38 @@ func Render(s Settings, users []store.User, domain string, haveCert bool) ([]byt
 	if ServingNaive(s, domain, haveCert) {
 		inbounds = append(inbounds, naiveInbounds(s, users, domain)...)
 	}
-	return marshal(inbounds)
+	return marshal(s, inbounds, users, ClashPort)
 }
 
 // marshal is the config around inbounds, the same for sing-box and mbox.
-func marshal(inbounds []obj) ([]byte, error) {
+// Each user leaves through a direct outbound of their own, which names
+// them in the Clash API's list of connections (see Watch); the API listens
+// on clashPort on loopback only and wants the secret.
+func marshal(s Settings, inbounds []obj, users []store.User, clashPort int) ([]byte, error) {
+	outbounds := []obj{{"type": "direct", "tag": "direct"}}
+	rules := []obj{
+		// Resolve names first, so a name of a private address is
+		// refused like the address itself.
+		{"action": "resolve"},
+		{"ip_is_private": true, "action": "reject"},
+	}
+	for _, u := range users {
+		if !u.Enabled {
+			continue
+		}
+		name := xray.Name(u)
+		outbounds = append(outbounds, obj{"type": "direct", "tag": userOutbound + name})
+		rules = append(rules, obj{"auth_user": []string{name}, "outbound": userOutbound + name})
+	}
 	conf := obj{
 		"log":       obj{"disabled": true},
 		"inbounds":  inbounds,
-		"outbounds": []obj{{"type": "direct", "tag": "direct"}},
-		"route": obj{
-			"rules": []obj{
-				// Resolve names first, so a name of a private address is
-				// refused like the address itself.
-				{"action": "resolve"},
-				{"ip_is_private": true, "action": "reject"},
-			},
-			"final": "direct",
-		},
+		"outbounds": outbounds,
+		"route":     obj{"rules": rules, "final": "direct"},
+		"experimental": obj{"clash_api": obj{
+			"external_controller": "127.0.0.1:" + strconv.Itoa(clashPort),
+			"secret":              s.ClashSecret(),
+		}},
 	}
 	return json.MarshalIndent(conf, "", "  ")
 }
@@ -141,7 +155,7 @@ func RenderMieru(s Settings, users []store.User) ([]byte, error) {
 			}
 		}
 	}
-	return marshal(inbounds)
+	return marshal(s, inbounds, users, MieruClashPort)
 }
 
 // hy2Inbound is the Hysteria 2 inbound. Without Salamander a stranger who
