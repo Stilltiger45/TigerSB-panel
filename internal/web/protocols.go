@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -335,53 +336,97 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSNICheck tests a site from this server as a REALITY disguise.
+// handleSNICheck tests a site from this server as a REALITY disguise, at
+// the protocol's target when the form has one.
 func (s *Server) handleSNICheck(w http.ResponseWriter, r *http.Request) {
 	if !s.authed(w, r, true) {
 		return
 	}
 	var req struct {
-		SNI string `json:"sni"`
-	}
-	if !decode(w, r, maxBody, &req) {
-		return
-	}
-	writeJSON(w, http.StatusOK, xray.CheckSNI(r.Context(), req.SNI))
-}
-
-// handleScan looks for disguise sites next to this server, or in the given
-// address, subnet or domain.
-func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(w, r, true) {
-		return
-	}
-	var req struct {
+		SNI    string `json:"sni"`
 		Target string `json:"target"`
 	}
 	if !decode(w, r, maxBody, &req) {
 		return
 	}
+	writeJSON(w, http.StatusOK, xray.CheckSNI(r.Context(), req.SNI, req.Target))
+}
+
+// scanColumn is what the scanner found on one protocol's port.
+type scanColumn struct {
+	Proto   string       `json:"proto"`
+	Port    uint16       `json:"port"`
+	Results []xray.Probe `json:"results"`
+}
+
+// handleScan looks for disguise sites next to this server, or in the given
+// address, subnet or domain, on the ports of gRPC and XHTTP: those of the
+// form when it sends them (settings not saved yet), the saved ones if not.
+func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(w, r, true) {
+		return
+	}
+	var req struct {
+		Target    string `json:"target"`
+		GRPCPort  int    `json:"grpc_port"`
+		XHTTPPort int    `json:"xhttp_port"`
+	}
+	if !decode(w, r, maxBody, &req) {
+		return
+	}
 	ctx := r.Context()
-	if req.Target == "" {
-		set, err := xray.Load(ctx, s.store)
-		if err != nil {
-			internalError(w)
+	set, err := xray.Load(ctx, s.store)
+	if err != nil {
+		internalError(w)
+		return
+	}
+	if req.GRPCPort == 0 {
+		req.GRPCPort = set.GRPC.Port
+	}
+	if req.XHTTPPort == 0 {
+		req.XHTTPPort = set.XHTTP.Port
+	}
+	for _, p := range []int{req.GRPCPort, req.XHTTPPort} {
+		if p < 1 || p > 65535 {
+			badRequest(w, fmt.Sprintf("неверный порт %d", p))
 			return
 		}
-		set.Address = ""
-		req.Target = s.address(ctx, set)
+	}
+	grpcPort, xhttpPort := uint16(req.GRPCPort), uint16(req.XHTTPPort)
+	// This server is never a neighbour: REALITY on its own ports shows the
+	// certificate of its own disguise site, and a loop is no disguise.
+	set.Address = ""
+	self := s.address(ctx, set)
+	var skip []netip.Addr
+	if a, err := netip.ParseAddr(self); err == nil {
+		skip = append(skip, a.Unmap())
+	}
+	if s.LocalIPs != nil {
+		ips, _ := s.LocalIPs()
+		for _, ip := range ips {
+			if a, ok := netip.AddrFromSlice(ip); ok {
+				skip = append(skip, a.Unmap())
+			}
+		}
+	}
+	if req.Target == "" {
+		req.Target = self
 	}
 	if req.Target == "" {
 		badRequest(w, "не удалось узнать IP сервера: укажите адрес или подсеть")
 		return
 	}
-	results, err := xray.Scan(ctx, req.Target)
+	ports := []uint16{grpcPort}
+	if xhttpPort != grpcPort {
+		ports = append(ports, xhttpPort)
+	}
+	found, err := xray.Scan(ctx, req.Target, ports, skip)
 	if err != nil {
 		badRequest(w, err.Error())
 		return
 	}
-	if results == nil {
-		results = []xray.Probe{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"target": req.Target, "results": results})
+	writeJSON(w, http.StatusOK, map[string]any{"target": req.Target, "columns": []scanColumn{
+		{Proto: "grpc", Port: grpcPort, Results: found[grpcPort]},
+		{Proto: "xhttp", Port: xhttpPort, Results: found[xhttpPort]},
+	}})
 }

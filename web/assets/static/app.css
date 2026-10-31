@@ -337,6 +337,16 @@ table.scan th, table.scan td { text-align: left; padding: 8px 6px; border-bottom
 table.scan th { color: var(--muted); font-weight: 500; }
 table.scan tr.dim td { color: var(--muted); }
 table.scan .row { flex-wrap: nowrap; }
+table.scan code { font-size: 0.78rem; }
+table.scan td.site { overflow-wrap: break-word; }
+table.scan td.put { text-align: right; padding-right: 0; }
+.scan-col table.scan .marks { flex-direction: column; }
+.scan-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 14px; margin-top: 12px; }
+.scan-col { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; min-width: 0; }
+.scan-col.focus { border-color: var(--orange); }
+.scan-col .hint { margin: 2px 0 0; }
+.scan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.scan-head h3 { margin: 0; font-size: 1rem; }
 .savebar { display: grid; gap: 10px; }
 .savebar .hint { margin: 0; }
 

@@ -426,7 +426,7 @@ function sniTools(proto, r) {
       out.className = "probe";
       out.textContent = "Проверяю с сервера…";
       try {
-        showProbe(out, await api("api/protocols/check", { sni: r.sni }));
+        showProbe(out, await api("api/protocols/check", { sni: r.sni, target: r.target }));
       } catch (err) {
         out.className = "probe bad";
         out.textContent = err.message;
@@ -897,14 +897,19 @@ $("pr-save").addEventListener("click", async () => {
 // ---- Scanner ----
 let scanFor = "";
 
+const SCAN_NAMES = { grpc: "gRPC", xhttp: "XHTTP" };
+let lastScan = null;
+
 async function runScan() {
   const form = $("scan-form");
+  const set = protoData.settings;
   $("scan-run").disabled = true;
-  notice("scan-msg", "Сканирую, это до 45 секунд…");
-  $("scan-table").hidden = true;
+  notice("scan-msg", `Сканирую порты ${[...new Set([set.grpc.port, set.xhttp.port])].join(" и ")}, это до 45 секунд…`);
+  $("scan-cols").hidden = true;
   try {
-    const d = await api("api/protocols/scan", { target: form.target.value.trim() });
-    renderScan(d);
+    // The ports come from the form, so a port changed but not yet saved is
+    // the one searched.
+    renderScan(await api("api/protocols/scan", { target: form.target.value.trim(), grpc_port: set.grpc.port, xhttp_port: set.xhttp.port }));
   } catch (err) {
     notice("scan-msg", err.message, true);
   } finally {
@@ -912,34 +917,62 @@ async function runScan() {
   }
 }
 
-function useSNI(proto, domain) {
+// useSNI puts a found site into a protocol: its name as SNI, and the very
+// address the scanner checked as target, so strangers who knock on the
+// protocol's port meet that neighbour on the same port.
+function useSNI(proto, p) {
   const r = protoData.settings[proto].reality;
-  r.sni = domain;
-  r.target = "";
+  r.sni = p.domain;
+  r.target = p.addr;
   renderProtocols(protoData);
+  if (lastScan) renderScan(lastScan);
   $("proto-" + proto).scrollIntoView({ behavior: "smooth", block: "start" });
   dirty();
+  notice("pr-msg", `${SCAN_NAMES[proto]}: SNI ${p.domain}, target ${p.addr}. Нажмите «Сохранить и применить».`);
+}
+
+// breakable lets a long name wrap after its dots and colons on a phone.
+function breakable(text) {
+  return text.split(/(?<=[.:])/).flatMap((part, i) => (i ? [el("wbr"), part] : [part]));
+}
+
+function scanColumn(c) {
+  const r = protoData.settings[c.proto].reality;
+  const good = c.results.filter((p) => p.good).length;
+  const head = el("div", { class: "scan-head" },
+    el("h3", { text: `${SCAN_NAMES[c.proto]} · порт ${c.port}` }),
+    el("span", { class: "faint", text: c.results.length ? `сайтов ${c.results.length}, подходят ${good}` : "" }));
+  const col = el("div", { class: "scan-col" + (scanFor === c.proto ? " focus" : "") }, head,
+    el("p", { class: "hint", text: `Сейчас: ${r.sni || "SNI не задан"}${r.target ? " → " + r.target : ""}` }));
+  if (!c.results.length) {
+    col.append(el("p", { class: "muted", text: `На порту ${c.port} рядом нет сайтов. Попробуйте другую подсеть или домен.` }));
+    return col;
+  }
+  const t = el("table", { class: "scan" },
+    el("tr", {}, el("th", { text: "Сайт" }), el("th", { text: "Проверки" }), el("th", { text: "" })));
+  for (const p of c.results.slice(0, 40)) {
+    const checks = el("span", { class: "marks" });
+    for (const [name, ok] of marks(p)) checks.append(el("span", { class: ok ? "mark yes" : "mark no", text: (ok ? "✓ " : "✗ ") + name }));
+    const used = r.sni === p.domain && r.target === p.addr;
+    const put = used
+      ? el("span", { class: "mark yes", text: "вставлен" })
+      : el("button", { type: "button", class: (p.good ? "" : "ghost ") + "small", text: "Вставить", onclick: () => useSNI(c.proto, p) });
+    t.append(el("tr", { class: p.good ? "" : "dim" },
+      el("td", { class: "site" }, el("b", {}, ...breakable(p.domain)), el("br"), el("code", { class: "faint" }, ...breakable(p.addr)), el("span", { class: "faint", text: ` · ${p.latency_ms} мс` })),
+      el("td", {}, checks), el("td", { class: "put" }, put)));
+  }
+  col.append(el("div", { class: "table-wrap" }, t));
+  return col;
 }
 
 function renderScan(d) {
-  const t = $("scan-table");
-  t.replaceChildren(el("tr", {}, el("th", { text: "Сайт" }), el("th", { text: "Адрес" }), el("th", { text: "Проверки" }), el("th", { text: "Задержка" }), el("th", { text: "" })));
-  const good = d.results.filter((p) => p.good).length;
-  notice("scan-msg", d.results.length
-    ? `${d.target}: найдено сайтов ${d.results.length}, подходят ${good}.` + (scanFor ? ` Нажмите «${scanFor === "grpc" ? "gRPC" : "XHTTP"}», чтобы взять сайт.` : "")
-    : `${d.target}: рядом нет сайтов на порту 443. Попробуйте другую подсеть или домен.`, !d.results.length);
-  for (const p of d.results.slice(0, 60)) {
-    const checks = el("span", { class: "marks" });
-    for (const [name, ok] of marks(p)) checks.append(el("span", { class: ok ? "mark yes" : "mark no", text: (ok ? "✓ " : "✗ ") + name }));
-    const use = el("span", { class: "row" });
-    for (const [proto, label] of [["grpc", "gRPC"], ["xhttp", "XHTTP"]]) {
-      use.append(el("button", { type: "button", class: (scanFor === proto ? "" : "ghost ") + "small", text: label, onclick: () => useSNI(proto, p.domain) }));
-    }
-    t.append(el("tr", { class: p.good ? "" : "dim" },
-      el("td", {}, el("b", { text: p.domain })), el("td", {}, el("code", { text: p.addr })),
-      el("td", {}, checks), el("td", { text: p.latency_ms + " мс" }), el("td", {}, use)));
-  }
-  t.hidden = !d.results.length;
+  lastScan = d;
+  const total = d.columns.reduce((n, c) => n + c.results.length, 0);
+  notice("scan-msg", total
+    ? `${d.target}: «Вставить» кладёт сайт в SNI и target протокола, потом сохраните настройки.`
+    : `${d.target}: рядом нет сайтов на портах ${[...new Set(d.columns.map((c) => c.port))].join(" и ")}. Попробуйте другую подсеть или домен.`, !total);
+  $("scan-cols").replaceChildren(...d.columns.map(scanColumn));
+  $("scan-cols").hidden = !total;
 }
 
 $("scan-form").addEventListener("submit", (e) => {
