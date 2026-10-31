@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
+	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
 	"github.com/Stilltiger45/TigerSB-panel/internal/site"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
@@ -163,6 +165,8 @@ func (s *Server) usersState(ctx context.Context) (*usersResponse, error) {
 			resp.Warning = "Данные о подключениях пятиминутной давности: " + err.Error()
 		}
 	}
+	// sing-box and mbox count their users themselves (singbox.Runtime.Run).
+	cores := []map[int64]singbox.UserNow{s.Singbox.ReadOnline(s.now()), s.Mieru.ReadOnline(s.now())}
 	for _, u := range users {
 		v := userView{
 			ID: u.ID, Name: u.Name, UUID: u.UUID, Devices: u.Devices, Enabled: u.Enabled,
@@ -180,6 +184,22 @@ func (s *Server) usersState(ctx context.Context) (*usersResponse, error) {
 			}
 		} else {
 			json.Unmarshal([]byte(u.Online), &v.Online)
+		}
+		for _, now := range cores {
+			n, ok := now[u.ID]
+			if !ok {
+				continue
+			}
+			v.Up += n.Up
+			v.Down += n.Down
+			for _, a := range n.Online {
+				if !slices.ContainsFunc(v.Online, func(b xray.Address) bool { return b.IP == a.IP }) {
+					v.Online = append(v.Online, a)
+				}
+			}
+			if len(n.Online) > 0 {
+				v.SeenAt = s.now().Unix()
+			}
 		}
 		v.Over = len(v.Online) > u.Devices
 		online := map[string]bool{}

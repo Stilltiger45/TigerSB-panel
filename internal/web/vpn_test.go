@@ -158,6 +158,18 @@ func TestUsersLifecycle(t *testing.T) {
 	if !r.Live || r.Users[0].Down != 20 || len(r.Users[0].Online) != 3 || !r.Users[0].Over {
 		t.Fatalf("live: %+v", r)
 	}
+	// sing-box and mbox add what they counted and their addresses.
+	at := s.now().Unix()
+	os.MkdirAll(s.Singbox.Dir, 0o700)
+	os.MkdirAll(s.Mieru.Dir, 0o700)
+	os.WriteFile(s.Singbox.OnlinePath(), fmt.Appendf(nil, `{"at":%d,"users":{"1":{"up":5,"down":7,"online":[{"ip":"198.51.100.3"},{"ip":"203.0.113.9"}]}}}`, at), 0o600)
+	os.WriteFile(s.Mieru.OnlinePath(), fmt.Appendf(nil, `{"at":%d,"users":{"1":{"up":0,"down":3,"online":[]}}}`, at), 0o600)
+	r = decodeUsers(t, do(s, http.MethodGet, "/"+secret+"/api/users", "", c).Body.Bytes())
+	if r.Users[0].Down != 20+7+3 || r.Users[0].Up != 10+5 || len(r.Users[0].Online) != 4 {
+		t.Fatalf("with sing-box: %+v", r.Users[0])
+	}
+	os.Remove(s.Singbox.OnlinePath())
+	os.Remove(s.Mieru.OnlinePath())
 
 	// Name and devices change nothing in Xray.
 	before := len(f.calls)

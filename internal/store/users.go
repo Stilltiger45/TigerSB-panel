@@ -166,6 +166,29 @@ func (s *Store) RecordActivity(ctx context.Context, list []UserActivity, now tim
 	return tx.Commit()
 }
 
+// AddTraffic adds traffic and marks the users seen, leaving who is online
+// to RecordActivity: sing-box and mbox count their own users.
+func (s *Store) AddTraffic(ctx context.Context, list []UserActivity, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, a := range list {
+		seen := 0
+		if a.Seen {
+			seen = 1
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE users SET up = up + ?, down = down + ?,
+				seen_at = CASE WHEN ? = 1 THEN ? ELSE seen_at END
+			WHERE id = ?`, a.Up, a.Down, seen, now.Unix(), a.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // ResetTraffic zeroes a user's traffic counters.
 func (s *Store) ResetTraffic(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET up = 0, down = 0 WHERE id = ?`, id)
