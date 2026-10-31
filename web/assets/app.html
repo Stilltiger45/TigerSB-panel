@@ -151,16 +151,16 @@
     </div>
     <div class="glass">
       <h2>Поиск SNI сканером</h2>
-      <p class="muted">Сервер перебирает соседние адреса на порту 443 и смотрит, чьи сайты там живут и подходят ли они для REALITY: TLS 1.3, HTTP/2, обмен ключами X25519, действующий сертификат. Сосед из той же сети — лучшая маскировка. Идея сканера — RealiTLScanner.</p>
+      <p class="muted">Сервер перебирает соседние адреса на портах gRPC и XHTTP из настроек выше и смотрит, чьи сайты там живут. Имя сайта берётся из сертификата и проверяется ещё раз как SNI: подходит ли сайт для REALITY (TLS 1.3, HTTP/2, обмен ключами X25519, действующий сертификат). Сосед из той же сети на том же порту — лучшая маскировка. Идея сканера — RealiTLScanner.</p>
       <form id="scan-form" class="inline-form">
         <label>Где искать
           <input name="target" placeholder="" autocomplete="off" spellcheck="false">
         </label>
         <button type="submit" id="scan-run">Сканировать</button>
       </form>
-      <p class="hint">IP — его подсеть /24, подсеть — до 512 адресов, домен — подсеть его IP. Пусто — соседи этого сервера. Занимает до 45 секунд.</p>
+      <p class="hint">IP — его подсеть /24, подсеть — до 512 адресов, домен — подсеть его IP. Пусто — соседи этого сервера, сам сервер в список не попадает. Занимает до 45 секунд.</p>
       <p id="scan-msg" class="notice" hidden></p>
-      <div class="table-wrap"><table class="scan" id="scan-table" hidden></table></div>
+      <div class="scan-cols" id="scan-cols" hidden></div>
     </div>
   </section>
 

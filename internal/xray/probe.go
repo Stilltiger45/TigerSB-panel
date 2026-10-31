@@ -101,13 +101,21 @@ func certDomain(c *x509.Certificate) string {
 	return ""
 }
 
-// CheckSNI connects to domain:443 from this server, as REALITY will.
-func CheckSNI(ctx context.Context, domain string) Probe {
+// CheckSNI connects from this server with domain as SNI, as REALITY will:
+// to target when it is set (host:port), to domain:443 when it is not.
+func CheckSNI(ctx context.Context, domain, target string) Probe {
 	domain = strings.TrimSuffix(lower(domain), ".")
 	p := Probe{Domain: domain, Addr: net.JoinHostPort(domain, "443")}
 	if !domainRe.MatchString(domain) {
 		p.Error = "нужен домен сайта, например www.microsoft.com"
 		return p
+	}
+	if target = strings.TrimSpace(target); target != "" {
+		if _, port, err := net.SplitHostPort(target); err != nil || port == "" {
+			p.Error = "target должен быть адресом с портом, например 1.2.3.4:443"
+			return p
+		}
+		p.Addr = target
 	}
 	st, rtt, err := handshake(ctx, p.Addr, domain, 6*time.Second)
 	if err != nil {
@@ -120,9 +128,6 @@ func CheckSNI(ctx context.Context, domain string) Probe {
 
 // MaxScan caps how many addresses one scan touches.
 const MaxScan = 512
-
-// scanPort is where sites are looked for; tests change it.
-var scanPort uint16 = 443
 
 // scanTargets turns an IP, a CIDR or a domain into addresses. A single IP
 // or a domain means its /24 (IPv6: /120), where neighbours live.
@@ -169,60 +174,118 @@ func scanTargets(ctx context.Context, target string) ([]netip.Addr, error) {
 	return out, nil
 }
 
+// sniNames lists the names a client could send as SNI for this certificate:
+// the SANs without a wildcard, then the common name, at most three.
+func sniNames(c *x509.Certificate) []string {
+	var out []string
+	add := func(n string) {
+		n = strings.ToLower(n)
+		if strings.Contains(n, "*") || !domainRe.MatchString(n) || slices.Contains(out, n) || len(out) >= 3 {
+			return
+		}
+		out = append(out, n)
+	}
+	for _, n := range c.DNSNames {
+		add(n)
+	}
+	add(c.Subject.CommonName)
+	return out
+}
+
+// pickSNI shakes hands with addr again, now with each name from its
+// certificate as SNI, the way REALITY will forward a client, and keeps the
+// first name the site fits for. Without one, the first name's result stays.
+func pickSNI(ctx context.Context, addr string, names []string) (Probe, bool) {
+	var first Probe
+	ok := false
+	for _, n := range names {
+		st, rtt, err := handshake(ctx, addr, n, 3*time.Second)
+		if err != nil {
+			continue
+		}
+		p := Probe{Addr: addr, Domain: n}
+		describe(&p, st, rtt)
+		if p.Good {
+			return p, true
+		}
+		if !ok {
+			first, ok = p, true
+		}
+	}
+	return first, ok
+}
+
 // Scan looks for REALITY-friendly sites among the addresses of target (the
-// idea of RealiTLScanner, MPL-2.0): it shakes hands without SNI on port 443
-// and reads which site the certificate belongs to. Results come back best
-// first; addresses that did not answer are left out.
-func Scan(ctx context.Context, target string) ([]Probe, error) {
+// idea of RealiTLScanner, MPL-2.0) on each of ports: it shakes hands without
+// SNI, reads which site the certificate belongs to, then picks the name the
+// site answers best to. Addresses in skip (this server itself) and those
+// that did not answer are left out. Results per port come back best first.
+func Scan(ctx context.Context, target string, ports []uint16, skip []netip.Addr) (map[uint16][]Probe, error) {
 	addrs, err := scanTargets(ctx, target)
 	if err != nil {
 		return nil, err
 	}
+	addrs = slices.DeleteFunc(addrs, func(a netip.Addr) bool { return slices.Contains(skip, a) })
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	var mu sync.Mutex
-	var out []Probe
-	jobs := make(chan netip.Addr)
+	out := map[uint16][]Probe{}
+	for _, port := range ports {
+		out[port] = []Probe{}
+	}
+	jobs := make(chan netip.AddrPort)
 	var wg sync.WaitGroup
 	for range 64 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for a := range jobs {
-				addr := netip.AddrPortFrom(a, scanPort).String()
-				st, rtt, err := handshake(ctx, addr, "", 3*time.Second)
-				if err != nil {
+			for ap := range jobs {
+				addr := ap.String()
+				st, _, err := handshake(ctx, addr, "", 3*time.Second)
+				if err != nil || len(st.PeerCertificates) == 0 {
 					continue
 				}
-				p := Probe{Addr: addr}
-				describe(&p, st, rtt)
-				if p.Domain == "" {
+				names := sniNames(st.PeerCertificates[0])
+				if len(names) == 0 {
+					continue
+				}
+				p, ok := pickSNI(ctx, addr, names)
+				if !ok {
 					continue
 				}
 				mu.Lock()
-				out = append(out, p)
+				out[ap.Port()] = append(out[ap.Port()], p)
 				mu.Unlock()
 			}
 		}()
 	}
-	for _, a := range addrs {
-		select {
-		case jobs <- a:
-		case <-ctx.Done():
+	found := false
+send:
+	for _, port := range ports {
+		for _, a := range addrs {
+			select {
+			case jobs <- netip.AddrPortFrom(a, port):
+			case <-ctx.Done():
+				break send
+			}
 		}
 	}
 	close(jobs)
 	wg.Wait()
-	slices.SortFunc(out, func(a, b Probe) int {
-		if a.Good != b.Good {
-			if a.Good {
-				return -1
+	for port, list := range out {
+		slices.SortFunc(list, func(a, b Probe) int {
+			if a.Good != b.Good {
+				if a.Good {
+					return -1
+				}
+				return 1
 			}
-			return 1
-		}
-		return int(a.Latency - b.Latency)
-	})
-	if len(out) == 0 && ctx.Err() != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return int(a.Latency - b.Latency)
+		})
+		out[port] = list
+		found = found || len(list) > 0
+	}
+	if !found && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return nil, errors.New("сканирование не уложилось во время")
 	}
 	return out, nil

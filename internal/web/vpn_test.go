@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -554,5 +555,52 @@ func TestOverview(t *testing.T) {
 	}
 	if w := do(s, http.MethodGet, "/"+secret+"/api/overview", ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("without login: %d", w.Code)
+	}
+}
+
+// The scanner looks on the ports of gRPC and XHTTP: the form's ones, or the
+// saved ones, and never offers this server as its own neighbour.
+func TestScanPorts(t *testing.T) {
+	s, _, c := vpnServer(t)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+	set, err := xray.Load(context.Background(), s.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type column struct {
+		Proto   string       `json:"proto"`
+		Port    int          `json:"port"`
+		Results []xray.Probe `json:"results"`
+	}
+	scan := func(body string) (int, []column, string) {
+		w := do(s, http.MethodPost, "/"+secret+"/api/protocols/scan", body, c)
+		var d struct {
+			Columns []column `json:"columns"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &d)
+		return w.Code, d.Columns, w.Body.String()
+	}
+	code, cols, body := scan(fmt.Sprintf(`{"target":"127.0.0.1/32","grpc_port":%d}`, port))
+	if code != http.StatusOK || len(cols) != 2 || cols[0].Proto != "grpc" || cols[0].Port != port || cols[1].Proto != "xhttp" || cols[1].Port != set.XHTTP.Port {
+		t.Fatalf("%d %s", code, body)
+	}
+	if len(cols[0].Results) != 1 || cols[0].Results[0].Domain != "example.com" || cols[0].Results[0].Addr != fmt.Sprintf("127.0.0.1:%d", port) {
+		t.Fatalf("grpc column: %s", body)
+	}
+	// Same port for both: one scan, both columns show it.
+	code, cols, body = scan(fmt.Sprintf(`{"target":"127.0.0.1/32","grpc_port":%d,"xhttp_port":%d}`, port, port))
+	if code != http.StatusOK || len(cols[0].Results) != 1 || len(cols[1].Results) != 1 {
+		t.Fatalf("%d %s", code, body)
+	}
+	s.LocalIPs = func() ([]net.IP, error) { return []net.IP{net.ParseIP("127.0.0.1")}, nil }
+	if code, cols, body = scan(fmt.Sprintf(`{"target":"127.0.0.1/32","grpc_port":%d}`, port)); code != http.StatusOK || len(cols[0].Results) != 0 {
+		t.Fatalf("self offered: %d %s", code, body)
+	}
+	if code, _, body = scan(`{"target":"127.0.0.1/32","grpc_port":70000}`); code != http.StatusBadRequest {
+		t.Fatalf("bad port: %d %s", code, body)
 	}
 }

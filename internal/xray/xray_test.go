@@ -2,14 +2,17 @@ package xray
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -312,22 +315,52 @@ func TestScanTargets(t *testing.T) {
 	}
 }
 
-func TestScanFindsSite(t *testing.T) {
+func tlsSite(t *testing.T) uint16 {
+	t.Helper()
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	srv.EnableHTTP2 = true
 	srv.StartTLS()
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	n, _ := strconv.Atoi(port)
-	old := scanPort
-	scanPort = uint16(n)
-	defer func() { scanPort = old }()
-	list, err := Scan(context.Background(), "127.0.0.1/32")
-	if err != nil || len(list) != 1 {
-		t.Fatalf("%v %+v", err, list)
+	return uint16(n)
+}
+
+func TestScanFindsSite(t *testing.T) {
+	a, b := tlsSite(t), tlsSite(t)
+	found, err := Scan(context.Background(), "127.0.0.1/32", []uint16{a, b}, nil)
+	if err != nil || len(found[a]) != 1 || len(found[b]) != 1 {
+		t.Fatalf("%v %+v", err, found)
 	}
-	p := list[0]
-	if p.Domain != "example.com" || !p.TLS13 || !p.H2 || !p.X25519 || p.CertOK || p.Good {
+	p := found[a][0]
+	// The name comes from the certificate and is checked again as SNI.
+	if p.Domain != "example.com" || p.Addr != netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), a).String() ||
+		!p.TLS13 || !p.H2 || !p.X25519 || p.CertOK || p.Good {
 		t.Fatalf("%+v", p)
+	}
+	// «Проверить» goes to the target the scanner put in, not to domain:443.
+	if c := CheckSNI(context.Background(), "example.com", p.Addr); c.Error != "" || !c.TLS13 || c.Addr != p.Addr {
+		t.Fatalf("%+v", c)
+	}
+	if c := CheckSNI(context.Background(), "example.com", "127.0.0.1"); c.Error == "" {
+		t.Fatalf("target without port: %+v", c)
+	}
+	// This server itself is never offered as a neighbour.
+	found, err = Scan(context.Background(), "127.0.0.1/32", []uint16{a}, []netip.Addr{netip.MustParseAddr("127.0.0.1")})
+	if err != nil || len(found[a]) != 0 {
+		t.Fatalf("%v %+v", err, found)
+	}
+}
+
+func TestSNINames(t *testing.T) {
+	c := &x509.Certificate{DNSNames: []string{"*.example.com", "WWW.Example.com", "example.com", "www.example.com", "a.example.com", "b.example.com"}}
+	c.Subject.CommonName = "cn.example.com"
+	if got := sniNames(c); !slices.Equal(got, []string{"www.example.com", "example.com", "a.example.com"}) {
+		t.Fatal(got)
+	}
+	c = &x509.Certificate{}
+	c.Subject.CommonName = "*.only.wild"
+	if got := sniNames(c); len(got) != 0 {
+		t.Fatal(got)
 	}
 }
