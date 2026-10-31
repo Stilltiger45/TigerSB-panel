@@ -85,6 +85,23 @@ var migrations = []string{
 	// would show up as the new one's.
 	`CREATE TABLE user_ids (last INTEGER NOT NULL)`,
 	`INSERT INTO user_ids SELECT coalesce(max(id), 0) FROM users`,
+	// Each device holds a place of its user, 1 to the device limit, and
+	// connects with the key of that place (see Keys). Devices from before
+	// take places in the order they came.
+	`ALTER TABLE devices ADD COLUMN slot INTEGER NOT NULL DEFAULT 0`,
+	`UPDATE devices SET slot = (SELECT count(*) FROM devices d WHERE d.user_id = devices.user_id
+		AND (d.first_seen < devices.first_seen OR (d.first_seen = devices.first_seen AND d.id <= devices.id)))`,
+	// The generation of each place's key, raised when its device goes.
+	`CREATE TABLE slot_keys (
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		slot    INTEGER NOT NULL,
+		gen     INTEGER NOT NULL,
+		PRIMARY KEY (user_id, slot)
+	)`,
+	// Devices that have links from before still have the user's own key:
+	// it works for a day more, until they update the subscription.
+	`INSERT INTO settings (key, value) SELECT '` + sharedKeysSetting + `', CAST(strftime('%s', 'now') + 86400 AS TEXT)
+		WHERE EXISTS (SELECT 1 FROM users)`,
 }
 
 // Open opens (creating if needed) the database at path and applies migrations.
@@ -92,7 +109,9 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	dsn := "file:" + path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	// busy_timeout goes first, so that switching a new database to WAL
+	// waits for another process doing the same.
+	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -114,28 +133,40 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate(ctx context.Context) error {
-	var version int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+	// The services open the database at the same time after an update, so
+	// each migration takes the write lock first and checks the version
+	// under it: another process may have applied it meanwhile.
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
 		return err
 	}
-	for i := version; i < len(migrations); i++ {
-		tx, err := s.db.BeginTx(ctx, nil)
+	defer conn.Close()
+	for {
+		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+			return err
+		}
+		var version int
+		err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
+		if err == nil && version >= len(migrations) {
+			_, err = conn.ExecContext(ctx, "COMMIT")
+			return err
+		}
+		if err == nil {
+			if _, err = conn.ExecContext(ctx, migrations[version]); err != nil {
+				err = fmt.Errorf("миграция %d: %w", version+1, err)
+			}
+		}
+		if err == nil {
+			_, err = conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", version+1))
+		}
 		if err != nil {
+			conn.ExecContext(ctx, "ROLLBACK")
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("миграция %d: %w", i+1, err)
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 			return err
 		}
 	}
-	return nil
 }
 
 // UpsertAdmin creates the admin or replaces its password hash.

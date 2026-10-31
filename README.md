@@ -46,7 +46,7 @@ It is made for the [TigerSB](https://github.com/Stilltiger45/TigerSB-client) app
 - **Installs with one command** and gets a certificate for your domain by itself. Running it again breaks nothing.
 - **Stays hidden.** The panel opens only on a secret address; every other address shows a harmless "Maintenance" page. «Закрыть панель» (Close panel) hides the secret address too, and only SSH can open it again.
 - **A user in two clicks:** a name and a device count. Each user gets a `tigersb://` key and an `https://` subscription, both with a QR code.
-- **Device limit.** Extra phones and computers get no subscription, and any device can be removed with a button.
+- **Device limit.** Every device gets its own key, so extra phones and computers cannot connect even with copied links, and a removed device is cut off at once.
 - **Six protocols:** VLESS + REALITY over XHTTP and gRPC, TUIC, Hysteria 2, NaïveProxy and Mieru. Everything is set up from the start; changing anything is optional. Each protocol can get its own test link to check it alone.
 - **Watches the server:** the Overview tab sums up the whole panel, protocols, users and resources; the Control tab has load charts and health checks with a hint on what to do when something is wrong.
 - **Updates with a button** and rolls back by itself if the new version does not start.
@@ -144,7 +144,7 @@ Details: [architecture](docs/architecture.md) (in Russian), [profile and key for
 - **Login.** Passwords are stored as Argon2id, sessions as a SHA-256 of the token. Cookies are `HttpOnly`, `SameSite=Strict`, limited to the secret path (and `Secure` when logging in through the domain); a session lasts 12 hours. Ten failed attempts from one address block that address for 15 minutes; failures for a login or in total only slow logins down, so nobody can lock the admin out. Logins through an SSH tunnel are never limited. Changes are accepted only as same-origin JSON, and pages are served with a CSP and `X-Frame-Options`.
 - **Signed profile.** The panel creates an Ed25519 key once and signs every profile with it. The public key is part of the `tigersb://` key, and the client accepts only a profile with that signature, so nobody on the way can swap the servers.
 - **Invisible subscriptions.** A wrong token, a disabled user or a service that is down all return the same maintenance page with the same headers as any other page of the site. Responses are not cached, and the `Server` and `Via` headers are removed.
-- **HWID device limit.** The client sends `x-hwid` and device details, and a new device over the limit gets no subscription. The device IP comes from the PROXY header set by the port 443 service, so `X-Forwarded-For` cannot fake it.
+- **HWID device limit, a key per device.** The client sends `x-hwid` and device details; each device takes one of the user's places and gets that place's own key in every protocol, and a new device over the limit gets no subscription. Removing a device changes its place's key. The device IP comes from the PROXY header set by the port 443 service, so `X-Forwarded-For` cannot fake it.
 - **Isolated cores.** Xray, sing-box and mbox run from official images pinned by digest, without privileges (`--cap-drop ALL`), on a read-only file system and with no logs, so no user addresses are left on disk.
 - **Verified downloads.** Caddy is a pinned version checked against its SHA-512. The certificate is issued over TLS-ALPN, and port 80 stays closed.
 

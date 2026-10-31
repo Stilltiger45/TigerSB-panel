@@ -165,7 +165,8 @@ func tags(s Settings) []string {
 	return out
 }
 
-// AddUser adds an enabled user to the running Xray without a restart.
+// AddUser adds a key of an enabled user to the running Xray without a
+// restart.
 func (r *Runtime) AddUser(ctx context.Context, s Settings, u store.User) error {
 	var inbounds []obj
 	for _, tag := range tags(s) {
@@ -193,13 +194,13 @@ func (r *Runtime) AddUser(ctx context.Context, s Settings, u store.User) error {
 	return err
 }
 
-// RemoveUser takes a user out of the running Xray. rmu only stops new
+// RemoveUser takes a key of a user out of the running Xray. rmu only stops new
 // connections: open ones, say a download or a messenger over XHTTP, go on
 // with the old key, and Xray cannot close the connections of one user.
 // online tells that the user still has some; only a restart ends them,
 // and the caller decides when (see Restart).
-func (r *Runtime) RemoveUser(ctx context.Context, s Settings, id int64) (online bool, err error) {
-	return r.remove(ctx, tags(s), Email(id))
+func (r *Runtime) RemoveUser(ctx context.Context, s Settings, u store.User) (online bool, err error) {
+	return r.remove(ctx, tags(s), Name(u))
 }
 
 // RemoveTest takes the test link of a protocol out of the running Xray and

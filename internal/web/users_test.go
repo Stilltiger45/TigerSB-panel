@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
+	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
 )
 
@@ -77,14 +79,23 @@ func TestUsersComeAndGo(t *testing.T) {
 		return out
 	}
 	core := map[string]string{"Xray": "Xray", "TUIC": "sing-box", "Hysteria 2": "sing-box", "NaïveProxy": "sing-box", "Mieru": "Mieru"}
-	served := func(who, uuid string, want bool) {
+	// A user is served by the keys of its two places (store.Keys), never
+	// by its own UUID.
+	servedKey := func(who, key string, want bool) {
 		t.Helper()
 		conf := configs()
-		for proto, key := range keys(uuid) {
-			if got := strings.Contains(conf[core[proto]], key); got != want {
+		for proto, k := range keys(key) {
+			if got := strings.Contains(conf[core[proto]], k); got != want {
 				t.Errorf("%s in %s: served %v, want %v", who, proto, got, want)
 			}
 		}
+	}
+	served := func(who, uuid string, want bool) {
+		t.Helper()
+		for slot := 1; slot <= 2; slot++ {
+			servedKey(fmt.Sprintf("%s, place %d", who, slot), store.SlotUUID(uuid, slot, 0), want)
+		}
+		servedKey(who+" by the user's own key", uuid, false)
 	}
 	h := &sub.Handler{Store: s.store, Domain: func(context.Context) (string, error) { return "example.com", nil }, TUICCert: s.Singbox.HaveCert}
 	fetch := func(link string) (int, []string) {
@@ -111,7 +122,7 @@ func TestUsersComeAndGo(t *testing.T) {
 	served("Папа", papa.UUID, true)
 	for _, u := range []userView{mama, papa} {
 		code, links := fetch(u.Subs.HTTPS)
-		if code != http.StatusOK || len(links) != 6 || !strings.Contains(strings.Join(links, "\n"), u.UUID) {
+		if code != http.StatusOK || len(links) != 6 || !strings.Contains(strings.Join(links, "\n"), store.SlotUUID(u.UUID, 1, 0)) {
 			t.Fatalf("%s subscription: %d %q", u.Name, code, links)
 		}
 	}
@@ -119,7 +130,7 @@ func TestUsersComeAndGo(t *testing.T) {
 	// New links for Мама while she downloads over XHTTP: Xray swaps her key
 	// at once, sees her connections still open and restarts to end them
 	// together with the reload of sing-box and mbox.
-	f.sessions = map[string]int{"u1": 2}
+	f.sessions = map[string]int{"u1s1": 2}
 	n := len(f.calls)
 	r := decodeUsers(t, do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":1,"reissue":true}`, c).Body.Bytes())
 	mama2 := r.Users[0]
@@ -139,7 +150,7 @@ func TestUsersComeAndGo(t *testing.T) {
 	if code, _ := fetch(mama.Subs.HTTPS); code != http.StatusNotFound {
 		t.Fatalf("old subscription address: %d", code)
 	}
-	if code, links := fetch(mama2.Subs.HTTPS); code != http.StatusOK || !strings.Contains(strings.Join(links, "\n"), mama2.UUID) {
+	if code, links := fetch(mama2.Subs.HTTPS); code != http.StatusOK || !strings.Contains(strings.Join(links, "\n"), store.SlotUUID(mama2.UUID, 1, 0)) {
 		t.Fatalf("new subscription: %d %q", code, links)
 	}
 
@@ -164,7 +175,7 @@ func TestUsersComeAndGo(t *testing.T) {
 	if son.ID != 3 {
 		t.Fatalf("new user got ID %d, the deleted one's", son.ID)
 	}
-	if !strings.Contains(since(n), " adu ") || !strings.Contains(f.stdin[len(f.stdin)-1], son.UUID) {
+	if !strings.Contains(since(n), " adu ") || !strings.Contains(f.stdin[len(f.stdin)-1], store.SlotUUID(son.UUID, 2, 0)) {
 		t.Fatalf("new user not added live:\n%s", since(n))
 	}
 	served("Сын", son.UUID, true)
@@ -173,12 +184,49 @@ func TestUsersComeAndGo(t *testing.T) {
 	}
 
 	// Off and on again: the same key goes away and comes back.
-	f.sessions = map[string]int{"u3": 1}
+	f.sessions = map[string]int{"u3s1": 1}
 	do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":3,"enabled":false}`, c)
 	served("Сын turned off", son.UUID, false)
 	f.sessions = nil
 	do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":3,"enabled":true}`, c)
 	served("Сын turned on", son.UUID, true)
+
+	// A removed device is cut off: its place gets a new key, which the
+	// next device to take the place gets; the other place keeps its key.
+	code, links := fetch(son.Subs.HTTPS)
+	old := store.SlotUUID(son.UUID, 1, 0)
+	if code != http.StatusOK || !strings.Contains(strings.Join(links, "\n"), old) {
+		t.Fatalf("Сын's phone: %d %q", code, links)
+	}
+	r = decodeUsers(t, do(s, http.MethodGet, "/"+secret+"/api/users", "", c).Body.Bytes())
+	var phone deviceView
+	for _, u := range r.Users {
+		if u.ID == 3 && len(u.List) == 1 {
+			phone = u.List[0]
+		}
+	}
+	if phone.Slot != 1 {
+		t.Fatalf("phone: %+v", phone)
+	}
+	n = len(f.calls)
+	do(s, http.MethodPost, "/"+secret+"/api/users/device/delete", fmt.Sprintf(`{"user_id":3,"id":%d}`, phone.ID), c)
+	if calls := since(n); !strings.Contains(calls, "rmu --server=127.0.0.1:10085 -tag=grpc u3s1") || strings.Contains(calls, "u3s2") || !strings.Contains(f.stdin[len(f.stdin)-1], store.SlotUUID(son.UUID, 1, 1)) {
+		t.Fatalf("device delete:\n%s", calls)
+	}
+	servedKey("Сын's removed phone", old, false)
+	servedKey("Сын, new key of place 1", store.SlotUUID(son.UUID, 1, 1), true)
+	servedKey("Сын, place 2", store.SlotUUID(son.UUID, 2, 0), true)
+	if code, links := fetch(son.Subs.HTTPS); code != http.StatusOK || !strings.Contains(strings.Join(links, "\n"), store.SlotUUID(son.UUID, 1, 1)) {
+		t.Fatalf("phone again: %d %q", code, links)
+	}
+
+	// A lower limit takes the upper place away, and a higher one later
+	// does not bring its old key back.
+	do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":3,"devices":1}`, c)
+	servedKey("Сын, place 2 after the limit went down", store.SlotUUID(son.UUID, 2, 0), false)
+	do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":3,"devices":2}`, c)
+	servedKey("Сын, old key of place 2", store.SlotUUID(son.UUID, 2, 0), false)
+	servedKey("Сын, new key of place 2", store.SlotUUID(son.UUID, 2, 1), true)
 }
 
 // TestUsersBatch: changes within ApplyDelay go into sing-box and mbox with
@@ -202,16 +250,17 @@ func TestUsersBatch(t *testing.T) {
 	for _, name := range []string{"Мама", "Папа", "Сын"} {
 		r = decodeUsers(t, do(s, http.MethodPost, "/"+secret+"/api/users/add", `{"name":"`+name+`","devices":2}`, c).Body.Bytes())
 	}
-	f.sessions = map[string]int{"u2": 1, "u3": 1}
+	f.sessions = map[string]int{"u2s1": 1, "u3s1": 1}
 	do(s, http.MethodPost, "/"+secret+"/api/users/delete", `{"id":2}`, c)
 	r = decodeUsers(t, do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":3,"enabled":false}`, c).Body.Bytes())
-	if count(start, " adu ") != 3 || count(start, " rmu ") != 4 {
+	// Two places each: a key per place.
+	if count(start, " adu ") != 6 || count(start, " rmu ") != 8 {
 		t.Fatalf("Xray did not take the users at once:\n%s", strings.Join(f.calls[start:], "\n"))
 	}
 	if count(start, "systemctl") != 0 || r.Pending < 3500 {
 		t.Fatalf("pending %d, calls:\n%s", r.Pending, strings.Join(f.calls[start:], "\n"))
 	}
-	if conf, _ := os.ReadFile(s.Singbox.ConfigPath()); strings.Contains(string(conf), r.Users[0].UUID) {
+	if conf, _ := os.ReadFile(s.Singbox.ConfigPath()); strings.Contains(string(conf), store.SlotUUID(r.Users[0].UUID, 1, 0)) {
 		t.Fatal("sing-box config changed before the batch")
 	}
 
@@ -223,7 +272,7 @@ func TestUsersBatch(t *testing.T) {
 		t.Fatalf("apply (%d, %q):\n%s", r.Pending, r.Warning, strings.Join(f.calls[start:], "\n"))
 	}
 	conf, _ := os.ReadFile(s.Singbox.ConfigPath())
-	if !strings.Contains(string(conf), r.Users[0].UUID) {
+	if !strings.Contains(string(conf), store.SlotUUID(r.Users[0].UUID, 1, 0)) {
 		t.Fatal("Мама is not in sing-box after the batch")
 	}
 
