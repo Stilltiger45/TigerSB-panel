@@ -242,3 +242,68 @@ func TestForwardsNewGeneration(t *testing.T) {
 	}
 	c2.Close()
 }
+
+// TestHelloFlood: one address cannot hold more than maxHellosPerIP
+// connections without a ClientHello; the next one is closed at once, and
+// a place frees when a connection sends its hello or goes.
+func TestHelloFlood(t *testing.T) {
+	to, got := backend(t)
+	path := filepath.Join(t.TempDir(), "routes.json")
+	Write(path, Routes{Default: &Backend{Addr: to}})
+	srv := &Server{Path: path}
+	srv.Reload()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go srv.Serve(ln)
+	var idle []net.Conn
+	defer func() {
+		for _, c := range idle {
+			c.Close()
+		}
+	}()
+	for i := 0; i < maxHellosPerIP; i++ {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		idle = append(idle, c)
+	}
+	waitFor := func(n int) {
+		t.Helper()
+		for i := 0; i < 100; i++ {
+			srv.hMu.Lock()
+			now := srv.hTotal
+			srv.hMu.Unlock()
+			if now == n {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("waiting connections never reached %d", n)
+	}
+	waitFor(maxHellosPerIP)
+	closed := func() bool {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		c.SetReadDeadline(time.Now().Add(time.Second))
+		_, err = c.Read(make([]byte, 1))
+		return err == io.EOF
+	}
+	if !closed() {
+		t.Fatal("a connection over the limit was kept")
+	}
+	idle[0].Write([]byte("xxxxxx")) // not TLS: goes to the default backend
+	<-got
+	waitFor(maxHellosPerIP - 1)
+	idle[1].Close()
+	waitFor(maxHellosPerIP - 2)
+	if addrKey(&net.TCPAddr{IP: net.ParseIP("2001:db8:1:2:3:4:5:6")}) != addrKey(&net.TCPAddr{IP: net.ParseIP("2001:db8:1:2::9")}) {
+		t.Fatal("an IPv6 /64 is not one address")
+	}
+}

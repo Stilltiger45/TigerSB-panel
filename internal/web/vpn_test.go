@@ -211,7 +211,7 @@ func TestUsersLifecycle(t *testing.T) {
 	if fetch("a") != http.StatusNotFound {
 		t.Fatal("old subscription address still works")
 	}
-	tail := strings.Join(f.calls[len(f.calls)-6:], "\n")
+	tail := strings.Join(f.calls[len(f.calls)-12:], "\n")
 	if !strings.Contains(tail, "rmu --server=127.0.0.1:10085 -tag=grpc u1") || !strings.Contains(tail, "-tag=xhttp u1") {
 		t.Fatalf("reissue:\n%s", tail)
 	}

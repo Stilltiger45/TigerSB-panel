@@ -212,6 +212,8 @@ ul.soon li::marker { color: var(--orange); }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .notice { padding: 10px 14px; border-radius: 14px; background: rgba(255, 177, 92, 0.10); border: 1px solid rgba(255, 177, 92, 0.35); color: var(--orange-light); }
 .notice.bad { background: rgba(255, 107, 107, 0.08); border-color: rgba(255, 107, 107, 0.35); color: var(--error); }
+.notice.pending { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: space-between; margin: 10px 0 4px; }
+.notice.pending[hidden] { display: none; }
 table.lic { width: 100%; border-collapse: collapse; }
 table.lic td, table.lic th { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 table.lic th { color: var(--muted); font-weight: 500; }

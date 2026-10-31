@@ -113,6 +113,10 @@
         </div>
       </div>
       <div class="row proto-pills" id="users-protocols" aria-label="Состояние протоколов"></div>
+      <div class="notice pending" id="users-pending" hidden>
+        <span id="users-pending-text"></span>
+        <button id="users-apply" class="ghost" type="button">Применить сейчас</button>
+      </div>
       <input id="users-filter" class="filter" placeholder="Найти по имени" autocomplete="off" hidden>
       <ul class="users" id="users"></ul>
       <p class="hint" id="users-hint">Устройства считаются по подписке: приложение присылает свой HWID, и сверх лимита подписка новому устройству не выдаётся. Приложения без HWID считаются по одному устройству на приложение. «Удалить» освобождает место. «Новые ссылки» отключают все устройства сразу. Число подключённых к VPN адресов показано отдельно: два телефона за одним роутером дают один адрес.</p>

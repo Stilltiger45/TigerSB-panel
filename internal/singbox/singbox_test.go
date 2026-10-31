@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -351,17 +352,24 @@ func TestSyncCopiesCertAndReloads(t *testing.T) {
 	ctx := context.Background()
 	st.AddUser(ctx, &store.User{Name: "Мама", UUID: users()[0].UUID, Devices: 1, Enabled: true, Created: time.Now(), SubToken: strings.Repeat("a", 32)})
 	var calls []string
+	check := ""
 	rt := DefaultRuntime(dir)
 	rt.Exec = func(_ context.Context, _ []byte, name string, args ...string) (string, error) {
-		calls = append(calls, name+" "+strings.Join(args, " "))
+		line := name + " " + strings.Join(args, " ")
+		calls = append(calls, line)
+		if strings.Contains(line, " check -c ") && check != "" {
+			return "FATAL " + check, errors.New("exit 1")
+		}
 		return "", nil
 	}
+	const reload = "systemctl try-reload-or-restart tigersb-singbox.service"
 	const domain = "vpn.example.com"
-	// No certificate yet: a config without TUIC, nothing to serve.
+	// No certificate yet: a config without TUIC, nothing to serve. The new
+	// config is checked before it goes in place.
 	if err := rt.Sync(ctx, st, domain, true); err != nil {
 		t.Fatal(err)
 	}
-	if rt.HaveCert() || len(calls) != 1 {
+	if rt.HaveCert() || len(calls) != 2 || !strings.Contains(calls[0], " check -c ") || calls[1] != reload {
 		t.Fatalf("calls %v", calls)
 	}
 	writeCert(t, rt.Certs, "acme-v02.api.letsencrypt.org-directory", domain, time.Now().Add(24*time.Hour))
@@ -375,15 +383,26 @@ func TestSyncCopiesCertAndReloads(t *testing.T) {
 		t.Error("the newest certificate was not taken")
 	}
 	conf, _ := os.ReadFile(rt.ConfigPath())
-	if !strings.Contains(string(conf), `"type": "tuic"`) || len(calls) != 2 || calls[1] != "systemctl try-reload-or-restart tigersb-singbox.service" {
+	if !strings.Contains(string(conf), `"type": "tuic"`) || len(calls) != 4 || calls[3] != reload {
 		t.Fatalf("calls %v\n%s", calls, conf)
 	}
-	// Nothing changed: no reload.
-	if err := rt.Sync(ctx, st, domain, true); err != nil || len(calls) != 2 {
+	// Nothing changed: no check, no reload.
+	if err := rt.Sync(ctx, st, domain, true); err != nil || len(calls) != 4 {
 		t.Fatalf("calls %v %v", calls, err)
 	}
+	// A config sing-box refuses stays out: the running one is kept, and
+	// the caller hears why.
+	st.AddUser(ctx, &store.User{Name: "Папа", UUID: users()[1].UUID, Devices: 1, Enabled: true, Created: time.Now(), SubToken: strings.Repeat("b", 32)})
+	check = "initialize inbound[2]: missing users"
+	if err := rt.Sync(ctx, st, domain, true); err == nil || !strings.Contains(err.Error(), "missing users") || len(calls) != 5 {
+		t.Fatalf("calls %v %v", calls, err)
+	}
+	if now, _ := os.ReadFile(rt.ConfigPath()); string(now) != string(conf) {
+		t.Fatal("a refused config was put in place")
+	}
+	check = ""
 	// The domain is gone: the copies go too, and TUIC with them.
-	if err := rt.Sync(ctx, st, "", true); err != nil || rt.HaveCert() || len(calls) != 3 {
+	if err := rt.Sync(ctx, st, "", true); err != nil || rt.HaveCert() || len(calls) != 7 {
 		t.Fatalf("calls %v %v", calls, err)
 	}
 }
@@ -559,5 +578,45 @@ func TestRenderMieru(t *testing.T) {
 	s.Naive.Port, s.Mieru.Transport = 2443, "SCTP"
 	if err := s.Validate(); err == nil {
 		t.Fatal("unknown transport must be refused")
+	}
+}
+
+// With nobody to serve, NaïveProxy and Mieru get a user no one knows the
+// password of: both refuse a config without users.
+func TestPlaceholderUser(t *testing.T) {
+	s := defaults(t)
+	name, pw := s.Placeholder()
+	if pw == "" || pw == s.NaivePassword("") || strings.Contains(s.Secret, pw) {
+		t.Fatalf("placeholder password %q", pw)
+	}
+	off := []store.User{users()[1]} // disabled
+	raw, err := Render(s, off, "vpn.example.com", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conf struct {
+		Inbounds []struct {
+			Type  string
+			Users []map[string]string
+		}
+	}
+	json.Unmarshal(raw, &conf)
+	for _, in := range conf.Inbounds {
+		if in.Type == "naive" && (len(in.Users) != 1 || in.Users[0]["username"] != name || in.Users[0]["password"] != pw) {
+			t.Fatalf("naive users: %+v", in.Users)
+		}
+	}
+	raw, err = RenderMieru(s, off)
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(raw, &conf)
+	if len(conf.Inbounds) == 0 || len(conf.Inbounds[0].Users) != 1 || conf.Inbounds[0].Users[0]["name"] != name {
+		t.Fatalf("mieru: %+v", conf.Inbounds)
+	}
+	// Anyone real takes its place.
+	raw, _ = RenderMieru(s, users())
+	if strings.Contains(string(raw), name) {
+		t.Fatal("placeholder next to a real user")
 	}
 }

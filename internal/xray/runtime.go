@@ -193,28 +193,32 @@ func (r *Runtime) AddUser(ctx context.Context, s Settings, u store.User) error {
 	return err
 }
 
-// RemoveUser takes a user out of the running Xray; open connections of that
-// user end too (see remove). restarted means Xray read the config on disk,
-// so a user added to it is already there.
-func (r *Runtime) RemoveUser(ctx context.Context, s Settings, id int64) (restarted bool, err error) {
+// RemoveUser takes a user out of the running Xray. rmu only stops new
+// connections: open ones, say a download or a messenger over XHTTP, go on
+// with the old key, and Xray cannot close the connections of one user.
+// online tells that the user still has some; only a restart ends them,
+// and the caller decides when (see Restart).
+func (r *Runtime) RemoveUser(ctx context.Context, s Settings, id int64) (online bool, err error) {
 	return r.remove(ctx, tags(s), Email(id))
 }
 
-// RemoveTest takes the test link of a protocol out of the running Xray, like
-// RemoveUser.
+// RemoveTest takes the test link of a protocol out of the running Xray and
+// ends its open connections at once with a restart. restarted means Xray
+// read the config on disk, so a link added to it is already there.
 func (r *Runtime) RemoveTest(ctx context.Context, s Settings, tag string) (restarted bool, err error) {
 	if !slices.Contains(tags(s), tag) {
 		return false, nil
 	}
-	return r.remove(ctx, []string{tag}, Name(store.User{Only: tag}))
+	online, err := r.remove(ctx, []string{tag}, Name(store.User{Only: tag}))
+	if err != nil || !online {
+		return false, err
+	}
+	return true, r.Restart(ctx)
 }
 
-// remove takes a user out of the inbounds. rmu only stops new connections:
-// open ones, say a download or a messenger over XHTTP, go on with the old
-// key. Xray cannot close the connections of one user, so when the user
-// still has some, Xray restarts with the config on disk, which no longer
-// has the user; the others reconnect within a second.
-func (r *Runtime) remove(ctx context.Context, tags []string, name string) (bool, error) {
+// remove takes a user out of the inbounds and tells whether the user still
+// has open connections; when Xray cannot say, it counts as yes.
+func (r *Runtime) remove(ctx context.Context, tags []string, name string) (online bool, err error) {
 	for _, tag := range tags {
 		out, err := r.api(ctx, nil, "rmu", "-tag="+tag, name)
 		if errors.Is(err, ErrNoDocker) {
@@ -225,10 +229,8 @@ func (r *Runtime) remove(ctx context.Context, tags []string, name string) (bool,
 			return false, fmt.Errorf("Xray не удалил пользователя: %v %s", err, tail(out, 3))
 		}
 	}
-	if n, err := r.Online(ctx, name); err != nil || n > 0 {
-		return true, r.Restart(ctx)
-	}
-	return false, nil
+	n, err := r.Online(ctx, name)
+	return err != nil || n > 0, nil
 }
 
 // Online returns how many connections a user has open now.
@@ -386,8 +388,8 @@ func apiErr(err error, out string) error {
 }
 
 // Restart restarts the container with the config on disk. Connections drop
-// for a second, so user changes go through AddUser and RemoveUser instead,
-// which restart only to end the open connections of a removed user.
+// for a second, so user changes go through AddUser and RemoveUser instead;
+// a restart only ends the open connections of removed users.
 func (r *Runtime) Restart(ctx context.Context) error {
 	out, err := r.Exec(ctx, nil, "systemctl", "restart", Unit)
 	if err != nil {

@@ -212,7 +212,12 @@ func cmdServe(args []string) error {
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutdown)
+	err = srv.Shutdown(shutdown)
+	// User changes still waiting for sing-box and mbox go in before exit.
+	flush, cancelFlush := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelFlush()
+	h.Flush(flush)
+	return err
 }
 
 func cmdInfo(args []string) error {
