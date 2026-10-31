@@ -283,7 +283,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hdr.Set("Profile-Update-Interval", strconv.Itoa(UpdateHours))
 	hdr.Set("Subscription-Userinfo", fmt.Sprintf("upload=%d; download=%d; total=0; expire=0", u.Up, u.Down))
 
-	if err := h.Store.TouchDevice(ctx, device(r, u.ID), u.Devices, h.now()); errors.Is(err, store.ErrDeviceLimit) {
+	slot, err := h.Store.TouchDevice(ctx, device(r, u.ID), u.Devices, h.now())
+	if errors.Is(err, store.ErrDeviceLimit) {
 		msg := fmt.Sprintf("Лимит устройств (%d) исчерпан: попросите администратора удалить старое устройство", u.Devices)
 		if IsTigerSB(ua) {
 			hdr.Set("Content-Type", "text/plain; charset=utf-8")
@@ -311,15 +312,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ips, _ = h.LocalIPs()
 	}
 	addr := xray.PublicAddress(set, ips, domain)
-	links := xray.Links(set, addr, *u)
+	// The device gets the key of its place: another device with the same
+	// links cannot connect once the place is freed or given new keys.
+	key, err := h.Store.Key(ctx, *u, slot)
+	if err != nil {
+		log.Printf("sub: %v", err)
+		http.Error(w, "внутренняя ошибка", http.StatusInternalServerError)
+		return
+	}
+	links := xray.Links(set, addr, key)
 	if sb, err := singbox.Load(ctx, h.Store); err != nil {
 		log.Printf("sub: %v", err)
 	} else {
 		cert := h.TUICCert != nil && h.TUICCert()
-		links = append(links, singbox.Links(sb, addr, domain, cert, *u)...)
-		links = append(links, singbox.Hy2Links(sb, addr, domain, cert, *u)...)
-		links = append(links, singbox.NaiveLinks(sb, addr, domain, cert, *u)...)
-		links = append(links, singbox.MieruLinks(sb, addr, *u)...)
+		links = append(links, singbox.Links(sb, addr, domain, cert, key)...)
+		links = append(links, singbox.Hy2Links(sb, addr, domain, cert, key)...)
+		links = append(links, singbox.NaiveLinks(sb, addr, domain, cert, key)...)
+		links = append(links, singbox.MieruLinks(sb, addr, key)...)
 	}
 	if !IsTigerSB(ua) {
 		hdr.Set("Content-Type", "text/plain; charset=utf-8")

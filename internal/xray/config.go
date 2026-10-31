@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"strconv"
+	"strings"
 
 	"github.com/Stilltiger45/TigerSB-panel/internal/edge"
 	"github.com/Stilltiger45/TigerSB-panel/internal/store"
@@ -12,20 +13,31 @@ import (
 // Email is the name a user has inside Xray; stats are keyed by it.
 func Email(id int64) string { return "u" + strconv.FormatInt(id, 10) }
 
-// UserID parses an Email back; ok is false for anything else.
+// UserID parses an Email, or the name of one key of a user, back; ok is
+// false for anything else.
 func UserID(email string) (int64, bool) {
 	if len(email) < 2 || email[0] != 'u' {
 		return 0, false
 	}
-	id, err := strconv.ParseInt(email[1:], 10, 64)
+	user, slot, keyed := strings.Cut(email[1:], "s")
+	if keyed {
+		if n, err := strconv.Atoi(slot); err != nil || n < 1 {
+			return 0, false
+		}
+	}
+	id, err := strconv.ParseInt(user, 10, 64)
 	return id, err == nil && id > 0
 }
 
-// Name is what a user is called inside the cores: Email for a user, and
-// test-<protocol> for a test link, which the stats then leave out.
+// Name is what a key is called inside the cores: u<id>s<place> for the
+// key of a place, Email for the user's own, and test-<protocol> for a test
+// link, which the stats then leave out. The stats of a user add up its keys.
 func Name(u store.User) string {
 	if u.Only != "" {
 		return "test-" + u.Only
+	}
+	if u.Slot > 0 {
+		return Email(u.ID) + "s" + strconv.Itoa(u.Slot)
 	}
 	return Email(u.ID)
 }

@@ -28,6 +28,9 @@ type User struct {
 	// Only, when set, is the one protocol a test link works on (see
 	// TestUsers); such a user is not in the users table.
 	Only string
+	// Slot, when set, makes this one key of the user: the key of the
+	// device in that place, with its own UUID (see Keys).
+	Slot int
 }
 
 const userColumns = `id, name, uuid, devices, enabled, created_at, up, down, online, seen_at, sub_token`

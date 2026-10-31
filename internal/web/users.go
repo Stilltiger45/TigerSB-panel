@@ -53,6 +53,7 @@ type deviceView struct {
 	App       string `json:"app"`
 	IP        string `json:"ip"`
 	NoHWID    bool   `json:"no_hwid"` // counted per app: the client sent no x-hwid
+	Slot      int    `json:"slot"`    // its place, whose key it connects with; 0 for none
 	Online    bool   `json:"online"`  // its address is connected to Xray now
 	FirstSeen int64  `json:"first_seen"`
 	LastSeen  int64  `json:"last_seen"`
@@ -209,7 +210,7 @@ func (s *Server) usersState(ctx context.Context) (*usersResponse, error) {
 		for _, d := range byUser[u.ID] {
 			v.List = append(v.List, deviceView{
 				ID: d.ID, Model: d.Model, OS: d.OS, OSVersion: d.OSVersion, App: d.App, IP: d.IP,
-				NoHWID: strings.HasPrefix(d.HWID, "app:"), Online: d.IP != "" && online[d.IP],
+				NoHWID: strings.HasPrefix(d.HWID, "app:"), Slot: d.Slot, Online: d.IP != "" && online[d.IP],
 				FirstSeen: d.FirstSeen.Unix(), LastSeen: d.LastSeen.Unix(),
 			})
 		}
@@ -253,14 +254,55 @@ func (s *Server) live(ctx context.Context, f func(xray.Settings) (ended []string
 	return warning
 }
 
-// removeUser takes a user out of Xray: ended has its name when it still
-// has open connections.
-func (s *Server) removeUser(ctx context.Context, set xray.Settings, id int64) (ended []string, err error) {
-	online, err := s.Xray.RemoveUser(ctx, set, id)
-	if online {
-		ended = []string{xray.Email(id)}
+// rekey puts the change of a user's keys into the running cores: before
+// are the keys it had, after the ones it has now (store.Keys). Xray drops
+// the keys that went and takes the new ones live; a key that went with
+// open connections still ends them with the batch.
+func (s *Server) rekey(ctx context.Context, before, after []store.User) string {
+	gone, added := diffKeys(before, after)
+	if len(gone) == 0 && len(added) == 0 {
+		return ""
 	}
-	return ended, err
+	if err := s.sync(ctx); err != nil {
+		log.Printf("xray sync: %v", err)
+	}
+	return s.live(ctx, func(set xray.Settings) ([]string, error) {
+		var ended []string
+		for _, k := range gone {
+			online, err := s.Xray.RemoveUser(ctx, set, k)
+			if err != nil {
+				return ended, err
+			}
+			if online {
+				ended = append(ended, xray.Name(k))
+			}
+		}
+		for _, k := range added {
+			if err := s.Xray.AddUser(ctx, set, k); err != nil {
+				return ended, err
+			}
+		}
+		return ended, nil
+	})
+}
+
+// diffKeys returns the keys in before and not in after, and the other way
+// round. A key is its name in the cores with its UUID.
+func diffKeys(before, after []store.User) (gone, added []store.User) {
+	has := func(list []store.User, k store.User) bool {
+		return slices.ContainsFunc(list, func(o store.User) bool { return xray.Name(o) == xray.Name(k) && o.UUID == k.UUID })
+	}
+	for _, k := range before {
+		if !has(after, k) {
+			gone = append(gone, k)
+		}
+	}
+	for _, k := range after {
+		if !has(before, k) {
+			added = append(added, k)
+		}
+	}
+	return gone, added
 }
 
 func (s *Server) respondUsers(w http.ResponseWriter, ctx context.Context, warning string) {
@@ -333,11 +375,12 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		internalError(w)
 		return
 	}
-	if err := s.sync(ctx); err != nil {
-		log.Printf("xray sync: %v", err)
+	keys, err := s.store.Keys(ctx, *u, s.now())
+	if err != nil {
+		internalError(w)
+		return
 	}
-	warning := s.live(ctx, func(set xray.Settings) ([]string, error) { return nil, s.Xray.AddUser(ctx, set, *u) })
-	s.respondUsers(w, ctx, warning)
+	s.respondUsers(w, ctx, s.rekey(ctx, nil, keys))
 }
 
 // handleUserUpdate changes a user: name, device limit, on/off, new links
@@ -370,6 +413,11 @@ func (s *Server) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := *u
+	beforeKeys, err := s.store.Keys(ctx, before, s.now())
+	if err != nil {
+		internalError(w)
+		return
+	}
 	if req.Name != nil {
 		if u.Name, err = checkName(*req.Name); err != nil {
 			badRequest(w, err.Error())
@@ -409,29 +457,25 @@ func (s *Server) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if u.Devices < before.Devices && !req.Reissue {
+		// The places above the new limit go, with their devices.
+		if err := s.store.TrimSlots(ctx, u.ID, before.Devices, u.Devices); err != nil {
+			internalError(w)
+			return
+		}
+	}
 	if req.ResetTraffic {
 		if err := s.store.ResetTraffic(ctx, u.ID); err != nil {
 			internalError(w)
 			return
 		}
 	}
-	warning := ""
-	if before.UUID != u.UUID || before.Enabled != u.Enabled {
-		if err := s.sync(ctx); err != nil {
-			log.Printf("xray sync: %v", err)
-		}
-		warning = s.live(ctx, func(set xray.Settings) ([]string, error) {
-			var ended []string
-			if before.Enabled {
-				var err error
-				if ended, err = s.removeUser(ctx, set, u.ID); err != nil {
-					return nil, err
-				}
-			}
-			return ended, s.Xray.AddUser(ctx, set, *u)
-		})
+	keys, err := s.store.Keys(ctx, *u, s.now())
+	if err != nil {
+		internalError(w)
+		return
 	}
-	s.respondUsers(w, ctx, warning)
+	s.respondUsers(w, ctx, s.rekey(ctx, beforeKeys, keys))
 }
 
 // handleUserDelete removes a user; its devices are cut off at once.
@@ -456,18 +500,16 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		internalError(w)
 		return
 	}
+	keys, err := s.store.Keys(ctx, *u, s.now())
+	if err != nil {
+		internalError(w)
+		return
+	}
 	if err := s.store.DeleteUser(ctx, u.ID); err != nil {
 		internalError(w)
 		return
 	}
-	if err := s.sync(ctx); err != nil {
-		log.Printf("xray sync: %v", err)
-	}
-	warning := ""
-	if u.Enabled {
-		warning = s.live(ctx, func(set xray.Settings) ([]string, error) { return s.removeUser(ctx, set, u.ID) })
-	}
-	s.respondUsers(w, ctx, warning)
+	s.respondUsers(w, ctx, s.rekey(ctx, keys, nil))
 }
 
 // handleUserQR draws a subscription link of a user (kind tigersb or https)
@@ -511,8 +553,8 @@ func (s *Server) handleUserQR(w http.ResponseWriter, r *http.Request) {
 	w.Write(svg)
 }
 
-// handleDeviceDelete forgets a device of a user, freeing its place. The
-// device gets it back on its next subscription update while there is room.
+// handleDeviceDelete forgets a device of a user and cuts it off: its place
+// gets a new key, which the next device to take the place gets.
 func (s *Server) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	if !s.authed(w, r, true) {
 		return
@@ -524,7 +566,22 @@ func (s *Server) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, maxBody, &req) {
 		return
 	}
+	s.xrayMu.Lock()
+	defer s.xrayMu.Unlock()
 	ctx := r.Context()
+	u, err := s.store.UserByID(ctx, req.UserID)
+	if errors.Is(err, store.ErrNotFound) {
+		badRequest(w, "устройство не найдено")
+		return
+	} else if err != nil {
+		internalError(w)
+		return
+	}
+	before, err := s.store.Keys(ctx, *u, s.now())
+	if err != nil {
+		internalError(w)
+		return
+	}
 	if err := s.store.DeleteDevice(ctx, req.UserID, req.ID); errors.Is(err, store.ErrNotFound) {
 		badRequest(w, "устройство не найдено")
 		return
@@ -532,5 +589,10 @@ func (s *Server) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
 		internalError(w)
 		return
 	}
-	s.respondUsers(w, ctx, "")
+	after, err := s.store.Keys(ctx, *u, s.now())
+	if err != nil {
+		internalError(w)
+		return
+	}
+	s.respondUsers(w, ctx, s.rekey(ctx, before, after))
 }

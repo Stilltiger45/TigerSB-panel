@@ -241,7 +241,9 @@ function deviceBlock(u) {
         el("div", { class: "device-title" },
           el("b", { text: title }),
           d.online ? el("span", { class: "pill ok", text: "в сети" }) : "",
-          d.no_hwid ? el("span", { class: "pill off", text: "без HWID", title: "Приложение не сообщает HWID: панель считает его одним устройством на приложение." }) : ""),
+          d.no_hwid ? el("span", { class: "pill off", text: "без HWID", title: "Приложение не сообщает HWID: панель считает его одним устройством на приложение." }) : "",
+          d.slot ? el("span", { class: "faint", text: `место ${d.slot}`, title: "У каждого места свой ключ: устройство подключается только с ключом своего места." })
+            : el("span", { class: "pill off", text: "без места", title: "Мест нет: устройство не подключится, пока не освободится место." })),
         meta ? el("small", { class: "muted", text: meta }) : "",
         el("small", { class: "faint", text: `${d.ip ? d.ip + " · " : ""}подписка обновлена ${agoText(d.last_seen)} · с ${when(d.first_seen * 1000)}` })),
       del));

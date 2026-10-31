@@ -17,6 +17,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/edge"
 	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/singbox"
+	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/sub"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
@@ -136,12 +137,12 @@ func TestUsersLifecycle(t *testing.T) {
 	if !strings.Contains(f.joined(), "docker exec -i tigersb-xray /usr/local/bin/xray api adu --server=127.0.0.1:10085 stdin:") {
 		t.Fatalf("no live add:\n%s", f.joined())
 	}
-	if !strings.Contains(f.stdin[0], `"tag":"grpc"`) || !strings.Contains(f.stdin[0], `"tag":"xhttp"`) || !strings.Contains(f.stdin[0], u.UUID) {
+	if !strings.Contains(f.stdin[0], `"tag":"grpc"`) || !strings.Contains(f.stdin[0], `"tag":"xhttp"`) || !strings.Contains(f.stdin[0], store.SlotUUID(u.UUID, 1, 0)) {
 		t.Fatalf("adu input: %s", f.stdin[0])
 	}
 	conf, _ := os.ReadFile(s.Xray.ConfigPath())
-	if !strings.Contains(string(conf), u.UUID) {
-		t.Fatal("config on disk lacks the user")
+	if !strings.Contains(string(conf), store.SlotUUID(u.UUID, 1, 0)) || strings.Contains(string(conf), u.UUID) {
+		t.Fatal("config on disk lacks the user's key, or has the user's own")
 	}
 
 	if w := do(s, http.MethodPost, "/"+secret+"/api/users/add", `{"name":"Мама","devices":1}`, c); w.Code != http.StatusBadRequest {
@@ -152,8 +153,9 @@ func TestUsersLifecycle(t *testing.T) {
 	}
 
 	// Live stats: traffic adds to the stored one, three addresses exceed two devices.
-	f.online = `{"users":[{"email":"u1","ips":[{"ip":"198.51.100.1","lastSeen":"1761500000"},{"ip":"198.51.100.2"},{"ip":"198.51.100.3"}]}]}`
-	f.traffic = `{"stat":[{"name":"user>>>u1>>>traffic>>>uplink","value":10},{"name":"user>>>u1>>>traffic>>>downlink","value":20}]}`
+	// The keys of the places add up to the user.
+	f.online = `{"users":[{"email":"u1s1","ips":[{"ip":"198.51.100.1","lastSeen":"1761500000"},{"ip":"198.51.100.2"}]},{"email":"u1s2","ips":[{"ip":"198.51.100.3"}]}]}`
+	f.traffic = `{"stat":[{"name":"user>>>u1s1>>>traffic>>>uplink","value":10},{"name":"user>>>u1s1>>>traffic>>>downlink","value":15},{"name":"user>>>u1s2>>>traffic>>>downlink","value":5}]}`
 	r = decodeUsers(t, do(s, http.MethodGet, "/"+secret+"/api/users", "", c).Body.Bytes())
 	if !r.Live || r.Users[0].Down != 20 || len(r.Users[0].Online) != 3 || !r.Users[0].Over {
 		t.Fatalf("live: %+v", r)
@@ -171,16 +173,23 @@ func TestUsersLifecycle(t *testing.T) {
 	os.Remove(s.Singbox.OnlinePath())
 	os.Remove(s.Mieru.OnlinePath())
 
-	// Name and devices change nothing in Xray.
+	// A name changes nothing in Xray; a higher limit only adds the keys of
+	// the new places, and the open connections keep theirs.
 	before := len(f.calls)
-	w = do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":1,"name":"Папа","devices":3}`, c)
-	if r := decodeUsers(t, w.Body.Bytes()); r.Users[0].Name != "Папа" || r.Users[0].Over {
+	w = do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":1,"name":"Папа"}`, c)
+	if r := decodeUsers(t, w.Body.Bytes()); r.Users[0].Name != "Папа" {
 		t.Fatalf("rename: %s", w.Body)
 	}
-	for _, call := range f.calls[before:] {
-		if strings.Contains(call, " adu ") || strings.Contains(call, " rmu ") {
-			t.Fatalf("rename touched Xray: %s", call)
-		}
+	if calls := strings.Join(f.calls[before:], "\n"); strings.Contains(calls, " adu ") || strings.Contains(calls, " rmu ") {
+		t.Fatalf("rename touched Xray:\n%s", calls)
+	}
+	before, stdin := len(f.calls), len(f.stdin)
+	w = do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":1,"devices":3}`, c)
+	if r := decodeUsers(t, w.Body.Bytes()); r.Users[0].Over {
+		t.Fatalf("devices: %s", w.Body)
+	}
+	if calls := strings.Join(f.calls[before:], "\n"); strings.Contains(calls, " rmu ") || len(f.stdin) != stdin+1 || !strings.Contains(f.stdin[stdin], `"email":"u1s3"`) {
+		t.Fatalf("higher limit:\n%s", calls)
 	}
 
 	// Devices that fetched the subscription show up and can be removed.
@@ -223,15 +232,15 @@ func TestUsersLifecycle(t *testing.T) {
 	if fetch("a") != http.StatusNotFound {
 		t.Fatal("old subscription address still works")
 	}
-	tail := strings.Join(f.calls[len(f.calls)-12:], "\n")
-	if !strings.Contains(tail, "rmu --server=127.0.0.1:10085 -tag=grpc u1") || !strings.Contains(tail, "-tag=xhttp u1") {
+	tail := strings.Join(f.calls[len(f.calls)-30:], "\n")
+	if !strings.Contains(tail, "rmu --server=127.0.0.1:10085 -tag=grpc u1s1") || !strings.Contains(tail, "-tag=xhttp u1s3") {
 		t.Fatalf("reissue:\n%s", tail)
 	}
 
 	// Off takes the user out of Xray and the config.
 	do(s, http.MethodPost, "/"+secret+"/api/users/update", `{"id":1,"enabled":false}`, c)
 	conf, _ = os.ReadFile(s.Xray.ConfigPath())
-	if strings.Contains(string(conf), r.Users[0].UUID) {
+	if strings.Contains(string(conf), store.SlotUUID(r.Users[0].UUID, 1, 0)) || strings.Contains(string(conf), "u1s") {
 		t.Fatal("disabled user is still in the config")
 	}
 

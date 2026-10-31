@@ -15,6 +15,7 @@ import (
 	"github.com/Stilltiger45/TigerSB-panel/internal/health"
 	"github.com/Stilltiger45/TigerSB-panel/internal/metrics"
 	"github.com/Stilltiger45/TigerSB-panel/internal/service"
+	"github.com/Stilltiger45/TigerSB-panel/internal/store"
 	"github.com/Stilltiger45/TigerSB-panel/internal/update"
 	"github.com/Stilltiger45/TigerSB-panel/internal/xray"
 )
@@ -47,6 +48,9 @@ func cmdMonitor(args []string) error {
 			fmt.Fprintln(os.Stderr, "трафик пользователей:", err)
 		}
 	}
+	if err := e.endSharedKeys(ctx, now); err != nil {
+		fmt.Fprintln(os.Stderr, "общие ключи:", err)
+	}
 	// A renewed certificate reaches TUIC within five minutes, and so do
 	// user changes the panel did not get to apply (see web.ApplyDelay).
 	if err := e.singbox().Sync(ctx, e.st, e.set.Domain, true); err != nil {
@@ -71,6 +75,45 @@ func cmdMonitor(args []string) error {
 		}
 	}
 	return nil
+}
+
+// endSharedKeys takes the users' own keys out of Xray once their day is
+// over (store.SharedKeysUntil); sing-box and mbox lose them with the next
+// Sync, which renders without them.
+func (e *env) endSharedKeys(ctx context.Context, now time.Time) error {
+	until, err := e.st.SharedKeysUntil(ctx)
+	if err != nil || until.IsZero() || now.Before(until) {
+		return err
+	}
+	rt := e.runtime()
+	if err := rt.Sync(ctx, e.st, e.set.Domain, false); err != nil {
+		return err
+	}
+	if service.UnitState(service.ExecRunner, xray.Unit) == "active" {
+		set, err := xray.Load(ctx, e.st)
+		if err != nil {
+			return err
+		}
+		users, err := e.st.Users(ctx)
+		if err != nil {
+			return err
+		}
+		online := false
+		for _, u := range users {
+			on, err := rt.RemoveUser(ctx, set, store.User{ID: u.ID})
+			if err != nil {
+				return err
+			}
+			online = online || on
+		}
+		// Open connections on the old keys end once.
+		if online {
+			if err := rt.Restart(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return e.st.EndSharedKeys(ctx)
 }
 
 func cmdUpdate(args []string) error {
